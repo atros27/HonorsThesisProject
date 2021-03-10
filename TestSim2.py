@@ -12,16 +12,16 @@ class TestSim2:
         self.G = 25e6 #Aluminum Shear Modulus
         self.rho = 2.71e3 #kg/m^3
         self.air_density = 1.2 #kg/m^3
-        self.c_t = 1E-5
+        self.c_t = 1e-5
         self.c_b = .01
 
         self.r = .01 #1 cm radius for now Todo: Determine Geometric Settings, possibly customize
         self.b = .05
         self.e = .1
-        self.L = .5 #Note: Tip bodies and shaft-beam have identical length
+        self.L = 1 #Note: Tip bodies and shaft-beam have identical length
 
-        self.U = 5
-        self.delta = -60/180*math.pi
+        self.U = 50
+        self.delta = 0/180*math.pi
 
         self.J = 0.5*math.pi*math.pow(self.r, 4)
         self.I = 0.25*math.pi*math.pow(self.r, 4)
@@ -62,7 +62,7 @@ class TestSim2:
 
     def simulate(self):
         #gamma_0 = np.array([0, 0, 0, 0, 0, 0, .1, .1, .1, .1, .1, .1])
-        gamma_0 = np.array([.01, .01, 0, 0])
+        gamma_0 = np.array([0, 0, .01, .01])
         dt = 1
         t = (0, 5)
         solution = solve_ivp(self.derivative, t, y0=gamma_0)
@@ -141,23 +141,28 @@ class TestSim2:
         v_r2_2 = math.pow(self.U*math.cos(self.delta) - x2_dot, 2) + math.pow(self.U*math.sin(self.delta) + y2_dot, 2)
 
         #alpha_1 = math.pi/3 - theta + math.atan2(self.U*math.sin(self.delta) - y1_dot, self.U*math.cos(self.delta) - x1_dot)
-        alpha_1 = math.pi / 3 - theta + math.atan2(self.U*math.sin(self.delta) + y1_dot, self.U*math.cos(self.delta)-x1_dot)
+        alpha_1 = math.pi / 3 - theta + math.atan2(self.U*math.sin(self.delta) - y1_dot, self.U*math.cos(self.delta) - x1_dot)
         #alpha_1 = (alpha_1+2*math.pi) % (2*math.pi)
+        #if alpha_1>math.pi:
+        #    alpha_1 = (alpha_1 - math.pi) - math.pi
         alpha_2 = math.pi/3 - theta + math.atan2(self.U*math.sin(self.delta) - y2_dot, self.U * math.cos(self.delta) - x2_dot)
-        print("Alpha: ",alpha_1)
+        #alpha_2 = (alpha_2 + 2 * math.pi) % (2 * math.pi)
+        #if alpha_2>math.pi:
+        #    alpha_2 = (alpha_2 - math.pi) - math.pi
+        print("Alpha: ",alpha_1,alpha_2)
 
-        F_x1 = -.5*self.air_density*v_r1_2 * self.b*self.L * ( -self.c_l(alpha_1)*math.sin(alpha_1-math.pi/3) + self.c_d(alpha_1)*math.cos(alpha_1-math.pi/3) )
-        F_y1 = -.5*self.air_density*v_r1_2 * self.b*self.L * ( self.c_l(alpha_1)*math.cos(alpha_1-math.pi/3) + self.c_d(alpha_1)*math.sin(alpha_1-math.pi/3) )
-        #F_x2 = -.5*self.rho*v_r2_2 * self.b*self.L * ( -self.c_l(alpha_2)*math.sin(alpha_2-math.pi/3) + self.c_d(alpha_2)*math.cos(alpha_2-math.pi/3) )
-        #F_y2 = -.5*self.rho*v_r2_2 * self.b*self.L * ( self.c_l(alpha_2)*math.cos(alpha_2-math.pi/3) + self.c_d(alpha_2)*math.sin(alpha_2-math.pi/3) )
+        F_x1 = .5*self.air_density*v_r1_2 * self.b*self.L * ( -self.c_l(alpha_1)*math.sin(alpha_1-math.pi/3) + self.c_d(alpha_1)*math.cos(alpha_1-math.pi/3) )
+        F_y1 = .5*self.air_density*v_r1_2 * self.b*self.L * ( self.c_l(alpha_1)*math.cos(alpha_1-math.pi/3) + self.c_d(alpha_1)*math.sin(alpha_1-math.pi/3) )
+        F_x2 = .5*self.air_density*v_r2_2 * self.b*self.L * ( -self.c_l(alpha_2)*math.sin(alpha_2-math.pi/3) + self.c_d(alpha_2)*math.cos(alpha_2-math.pi/3) )
+        F_y2 = .5*self.air_density*v_r2_2 * self.b*self.L * ( self.c_l(alpha_2)*math.cos(alpha_2-math.pi/3) + self.c_d(alpha_2)*math.sin(alpha_2-math.pi/3) )
 
-        F_x2 = 0
-        F_y2 = 0
+        #F_x2 = 0
+        #F_y2 = 0
 
         #F_x = F_x1 + F_x2
         #F_y = F_y1 + F_y2
         M_z = 0.5*self.e * (math.sin(theta)*(F_x1 - F_x2) + math.cos(theta)*(F_y2 - F_y1))
-        print("F_x: ",F_x1,"  F_y: ",F_y1)
+        print("F_x: ",F_x1,F_x2,"  F_y: ",F_y1,F_y2)
         #M_z = 0
         print("M_z: ",M_z)
         return [M_z]
