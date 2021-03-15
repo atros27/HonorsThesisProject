@@ -20,8 +20,8 @@ class TestSim2:
         self.e = .1
         self.L = 1 #Note: Tip bodies and shaft-beam have identical length
 
-        self.U = 50
-        self.delta = 0/180*math.pi
+        self.U = 5
+        self.delta =20/180*math.pi
 
         self.J = 0.5*math.pi*math.pow(self.r, 4)
         self.I = 0.25*math.pi*math.pow(self.r, 4)
