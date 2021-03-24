@@ -14,7 +14,7 @@ def __main__():
     end = time.time()
     print("Wind Model Created. Time Elapsed:",math.floor(end-start),"seconds")
     Simulation_1 = Simulation(WindModel_1)
-    #TestSim2_1 = TestSim2()
+    #TestSim3_1 = TestSim3()
     #print(WindModel_1.results.summary())
     #figure = WindModel_1.results.plot_forecast(10000)
     matplotlib.pyplot.show()

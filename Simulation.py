@@ -73,7 +73,7 @@ class Simulation:
         gamma_0 = np.array([0, 0, 0, 0, .01, .01, .01, .01])
         #dt = .01
         #t = np.arange(.1, step=dt)
-        t = (0, 5)
+        t = (0, 300)
         start = time.time()
         time_series = np.arange(0, 301)
         discrete_wind_series = np.array([self.wind.update() for i in range(0,301)])
@@ -88,7 +88,7 @@ class Simulation:
         end = time.time()
         print("Synthetic Wind Series Created. Time Elapsed:",math.floor(end-start),"seconds")
         start = time.time()
-        solution = solve_ivp(self.derivative, t, gamma_0, full_output=1, method='RK23')
+        solution = solve_ivp(self.derivative, t, gamma_0, full_output=1, method='RK45')
         end = time.time()
         print("IVP Solved. Time Elapsed:",math.floor(end-start),"seconds")
         #print("HU: ",info.get('hu'))
@@ -173,11 +173,11 @@ class Simulation:
         return d_gamma_dt
 
     def aerodynamics(self, t, gamma):
-        #U = self.speed_series(t)
-        #delta = self.direction_series(t)
+        U = self.speed_series(t)
+        delta = self.direction_series(t)/180*math.pi
         #Static Wind Test Case
-        U = 5
-        delta = 120
+        #U = 10
+        #delta = 120
 
         #theta = gamma[0] + gamma[1]
         #theta = (theta+2*math.pi) % (2*math.pi)
@@ -198,19 +198,19 @@ class Simulation:
         #print("1: ",x1_dot, y1_dot)
         #print("2: ",x2_dot, y2_dot)
 
-        v_r1_2 = math.pow(U*math.cos(delta) - x1_dot, 2) + math.pow(U*math.sin(delta) + y1_dot, 2)
-        v_r2_2 = math.pow(U*math.cos(delta) - x2_dot, 2) + math.pow(U*math.sin(delta) + y2_dot, 2)
+        v_r1_2 = math.pow(U*math.cos(delta) - x1_dot, 2) + math.pow(U*math.sin(delta) - y1_dot, 2)
+        v_r2_2 = math.pow(U*math.cos(delta) - x2_dot, 2) + math.pow(U*math.sin(delta) - y2_dot, 2)
 
         #alpha_1 = math.pi/3 - theta + math.atan2(self.U*math.sin(self.delta) - y1_dot, self.U*math.cos(self.delta) - x1_dot)
-        alpha_1 = math.pi / 3 + math.atan2(U*math.sin(delta) + y1_dot, U*math.cos(delta) - x1_dot)
+        alpha_1 = math.pi / 3 + math.atan2(U*math.sin(delta) - y1_dot, U*math.cos(delta) - x1_dot)
         #alpha_1 = (alpha_1+2*math.pi) % (2*math.pi)
-        alpha_2 = math.pi/3 + math.atan2(U*math.sin(delta) + y2_dot, U * math.cos(delta) - x2_dot)
+        alpha_2 = math.pi/3 + math.atan2(U*math.sin(delta) - y2_dot, U*math.cos(delta) - x2_dot)
         #print("Alpha: ",alpha_1, alpha_2)
 
-        F_x1 = .5*self.air_density*v_r1_2 * self.b*self.L * ( -self.c_l(alpha_1)*math.sin(alpha_1-math.pi/3) + self.c_d(alpha_1)*math.cos(alpha_1-math.pi/3) )
-        F_y1 = .5*self.air_density*v_r1_2 * self.b*self.L * ( self.c_l(alpha_1)*math.cos(alpha_1-math.pi/3) + self.c_d(alpha_1)*math.sin(alpha_1-math.pi/3) )
-        F_x2 = .5*self.air_density*v_r2_2 * self.b*self.L * ( -self.c_l(alpha_2)*math.sin(alpha_2-math.pi/3) + self.c_d(alpha_2)*math.cos(alpha_2-math.pi/3) )
-        F_y2 = .5*self.air_density*v_r2_2 * self.b*self.L * ( self.c_l(alpha_2)*math.cos(alpha_2-math.pi/3) + self.c_d(alpha_2)*math.sin(alpha_2-math.pi/3) )
+        F_x1 = -.5*self.air_density*v_r1_2 * self.b*self.L * ( -self.c_l(alpha_1)*math.sin(alpha_1-math.pi/3) + self.c_d(alpha_1)*math.cos(alpha_1-math.pi/3) )
+        F_y1 = -.5*self.air_density*v_r1_2 * self.b*self.L * ( self.c_l(alpha_1)*math.cos(alpha_1-math.pi/3) + self.c_d(alpha_1)*math.sin(alpha_1-math.pi/3) )
+        F_x2 = -.5*self.air_density*v_r2_2 * self.b*self.L * ( -self.c_l(alpha_2)*math.sin(alpha_2-math.pi/3) + self.c_d(alpha_2)*math.cos(alpha_2-math.pi/3) )
+        F_y2 = -.5*self.air_density*v_r2_2 * self.b*self.L * ( self.c_l(alpha_2)*math.cos(alpha_2-math.pi/3) + self.c_d(alpha_2)*math.sin(alpha_2-math.pi/3) )
 
 
         #F_x2 = 0
