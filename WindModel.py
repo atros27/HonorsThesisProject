@@ -1,25 +1,37 @@
+import math
 import numpy as np
 import pandas as pd
+import time
 from windrose import WindroseAxes
 
 from Markov import Markov
 
 class WindModel:
     def __init__(self, filename):
+        start = time.time()
         table = pd.read_excel(filename)
         table.dropna(inplace=True)
         sd_data = table.to_numpy()
         sd_data = [[row[0], (row[1]+360) % 360] for row in sd_data] #Turn negative angles to positive
         sd_data = np.array(sd_data)
         self.initial_state = sd_data[0, :]
+        self.current_state = self.initial_state
+        end = time.time()
+        print("Sample Wind Data Imported. Time Elapsed:",math.floor(end-start),"seconds")
 
         speed_resolution = 10.0 #Meaning: 0.1 m/s resolution
         direction_resolution = 1.0 #Meaning: 1 degree resolution
 
+        start = time.time()
         self.Speed_Markov = Markov(sd_data[:, 0], speed_resolution)
-        self.Direction_Markov = Markov(sd_data[:, 1], speed_resolution)
+        self.Direction_Markov = Markov(sd_data[:, 1], direction_resolution)
+        end = time.time()
+        print("Markov Models Created. Time Elapsed:",math.floor(end-start),"seconds")
 
-        self.test(sd_data)
+        #start = time.time()
+        #self.test(sd_data)
+        #end = time.time()
+        #print("Sample Test Completed. Time Elapsed:",math.floor(end-start),"seconds")
 
     def test(self, data):
         self.current_state = self.initial_state
