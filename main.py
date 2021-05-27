@@ -10,10 +10,10 @@ import matplotlib
 
 def __main__():
     start = time.time()
-    #WindModel_1 = WindModel('C:/Users/atros27/Documents/WindData2.xlsx')
+    WindModel_1 = WindModel('C:/Users/atros27/Documents/WindData2.xlsx')
     end = time.time()
     print("Wind Model Created. Time Elapsed:",math.floor(end-start),"seconds")
-    Simulation_1 = Simulation()#WindModel_1)
+    Simulation_1 = Simulation(WindModel_1)
     #TestSim3_1 = TestSim3()
     #print(WindModel_1.results.summary())
     #figure = WindModel_1.results.plot_forecast(10000)
