@@ -9,7 +9,7 @@ import time
 #TESTSIM3 : Biaxial Bending-only Rayleigh-Ritz 2DOF ODE
 
 class Simulation:
-    def __init__(self, wind):
+    def __init__(self):#, wind):
         #Todo: Align primary wind direction with tip bodies
         self.E = 68e9 #Aluminum Young's Modulus Todo: Replace with Material Class that holds these constants
         self.G = 25e9 #Aluminum Shear Modulus
@@ -28,7 +28,7 @@ class Simulation:
 
         self.U = 2
         self.delta = 0/180*math.pi
-        self.wind = wind
+        #self.wind = wind
         self.duration = 60#*60 #1 hour
 
         self.J = 0.5*math.pi*math.pow(self.r, 4)
@@ -139,32 +139,33 @@ class Simulation:
             t = (t0, t0+self.duration)
             start = time.time()
             time_series = np.arange(0, self.duration+1)
-            discrete_wind_series = np.array([self.wind.update() for i in range(0,self.duration+1)])
-            self.speed_series = sp.interpolate.interp1d(time_series, discrete_wind_series[:,0], fill_value="extrapolate")
-            self.direction_series = sp.interpolate.interp1d(time_series, discrete_wind_series[:,1], fill_value="extrapolate")
+            #discrete_wind_series = np.array([self.wind.update() for i in range(0,self.duration+1)])
+            #self.speed_series = sp.interpolate.interp1d(time_series, discrete_wind_series[:,0], fill_value="extrapolate")
+            #self.direction_series = sp.interpolate.interp1d(time_series, discrete_wind_series[:,1], fill_value="extrapolate")
+
             #test_wind_series = np.array([[10,-180+360/300*current_second] for current_second in time_series])
             #self.test_speed_series = sp.interpolate.interp1d(time_series, test_wind_series[:,0])
             #self.test_direction_series = sp.interpolate.interp1d(time_series, test_wind_series[:,1])
 
-            plt.figure()
-            plt.plot(time_series, discrete_wind_series[:,0], 'b', label="Synthetic Speed")
-            plt.xlabel("Time [s]")
-            plt.ylabel("Speed [m/s]")
-            plt.legend()
-            plt.figure()
-            plt.plot(time_series, discrete_wind_series[:,1], 'b', label="Synthetic Direction")
-            plt.xlabel("Time [s]")
-            plt.ylabel("Angle [degrees]")
-            plt.legend()
+            #plt.figure()
+            #plt.plot(time_series, discrete_wind_series[:,0], 'b', label="Synthetic Speed")
+            #plt.xlabel("Time [s]")
+            #plt.ylabel("Speed [m/s]")
+            #plt.legend()
+            #plt.figure()
+            #plt.plot(time_series, discrete_wind_series[:,1], 'b', label="Synthetic Direction")
+            #plt.xlabel("Time [s]")
+            #plt.ylabel("Angle [degrees]")
+            #plt.legend()
             end = time.time()
             print("Synthetic Wind Series Created. Time Elapsed:",math.floor(end-start),"seconds")
             start = time.time()
-            dt = 1E-3
-            time_series = np.arange(0,self.duration+dt, step=dt)
-            u_0 = np.array([0,0,0,0])
-            u_dot_0 = np.array([.01,.01,.01,.01])
-            #tx = time_series
-            y = self.newmark(u_0,u_dot_0,time_series,dt,.5,.25)
+            dt = 1
+            #time_series = np.arange(0,self.duration+dt, step=dt)
+            u_0 = np.array([[0,0,0,0]]).T
+            u_dot_0 = np.array([[.01,.01,.01,.01]]).T
+            #y = self.old_newmark(u_0,u_dot_0,time_series,dt,.5,.25)
+            [time_series,y] = self.newmark(u_0,u_dot_0,self.duration,dt,1E-3,.9,.5,.25)
             #solution = solve_ivp(self.derivative, t, gamma_0, method='RK23')#, jac=self.jacobian)#, first_step=step_size)#, jac=self.jacobian)
             end = time.time()
             print("IVP Solved. Time Elapsed:",math.floor(end-start),"seconds")
@@ -485,7 +486,75 @@ class Simulation:
         #print(d_gamma_dt)
         return d_gamma_dt
 
-    def newmark(self, u_0, u_dot_0, time, dt, alpha, beta):
+    def newmark(self, u_0, u_dot_0, tf, dt_init, rel_error, shrink_factor, alpha, beta):
+
+        #Initialize System Parameters
+        M_top = np.concatenate((self.M_matrix, np.zeros(shape=(2,2))), axis=1)
+        M_bot = np.concatenate((np.zeros(shape=(2,2)), self.M_matrix), axis=1)
+        M = np.concatenate((M_top, M_bot), axis=0)
+        print("M=",M)
+
+        C_mat = self.C_matrix
+        C_top = np.concatenate((C_mat,np.zeros(shape=(2,2))), axis=1)
+        C_bot = np.concatenate((np.zeros(shape=(2,2)),C_mat), axis=1)
+        C = np.concatenate((C_top,C_bot), axis=0)
+
+        print("C = ",C)
+
+        K_top = np.concatenate((self.K_matrix, np.zeros(shape=(2, 2))), axis=1)
+        K_bot = np.concatenate((np.zeros(shape=(2, 2)), self.K_matrix), axis=1)
+        K = np.concatenate((K_top, K_bot), axis=0)
+        print("K=",K)
+
+        #Initialize State Vectors
+        time = np.zeros(shape=(1,1))
+        #u = np.zeros(shape=(4,1))
+        u = u_0
+        u_dot_prev = u_dot_0
+        u_ddot_prev = np.linalg.solve(M, self.newmark_aero(u_dot_prev[:])-C.dot(u_dot_prev)-K.dot(u))
+        #i = 1
+        dt = dt_init
+        time = np.append(time, time[-1] + dt)
+        print(u)
+        print(u_dot_prev)
+        print(u_ddot_prev)
+        while time[-1] < tf:
+            error_criterion = (rel_error+1)*np.ones(shape=(4,1))
+            dt = dt/shrink_factor #Increase time step to prevent premature shortening
+            #while all(x > abs_error for x in error_criterion[:,0]):
+            while np.linalg.norm(error_criterion) > rel_error*np.linalg.norm(u_dot_prev):
+                #Shorten time steps for each failed iteration
+                dt = dt*shrink_factor
+
+                #Update (or try to Update again)
+                u_new = np.array([u[:,-1]]).T + u_dot_prev*dt + dt*dt/2*(1-2*beta)*u_ddot_prev
+                u_dot = u_dot_prev + dt*(1-alpha)*u_ddot_prev
+                #print("u:",u_new)
+                #print("u_dot:",u_dot)
+                #u_new = np.array([u_new[:,0]]).T #Normalize and remove repetitive entries
+                #u_dot = np.array([u_dot[:,0]]).T
+                #print(u_dot[:])
+                f_i = self.newmark_aero(u_dot[:])
+                matrix = M + alpha*dt*C + beta*dt*dt*K
+                vector = f_i - C.dot(u_dot) - K.dot(u_new)
+                u_ddot = np.linalg.solve(matrix, vector)
+
+                #Eval Error Criterion
+                error_criterion = abs((beta-1/6)*dt*dt*(u_ddot - u_ddot_prev))
+
+            #Finalize new state
+            u = np.append(u, u_new, axis=1)
+
+            #Reset Names
+            u_dot_prev = u_dot
+            u_ddot_prev = u_ddot
+            #i += 1
+            time = np.append(time, time[-1] + dt)
+            print(dt)
+        time = time[0:len(time)-1]
+        return [time,u]
+
+    def old_newmark(self, u_0, u_dot_0, time, dt, alpha, beta):
         #full_omega_matrix_top = np.concatenate((self.omega_matrix, np.zeros(shape=(2, 2))), axis=1)
         #full_omega_matrix_bottom = np.concatenate((np.zeros(shape=(2,2)),self.omega_matrix), axis=1)
         #full_omega_matrix = np.concatenate((full_omega_matrix_top,full_omega_matrix_bottom),axis=0)
@@ -558,9 +627,10 @@ class Simulation:
         force_1 = math.pow(self.L,2)/8
         force_2 = math.pow(self.L,2)/10
 
-        x_dot = phi_1*u_dot[0] + phi_2*u_dot[1]
-        y_dot = phi_1*u_dot[2] + phi_2*u_dot[3]
+        x_dot = phi_1*u_dot[0,0] + phi_2*u_dot[1,0]
+        y_dot = phi_1*u_dot[2,0] + phi_2*u_dot[3,0]
 
+        #print(u_dot)
         #print(x_dot,y_dot)
 
         v_r2 = math.pow(U*math.cos(delta) - x_dot, 2) + math.pow(U*math.sin(delta) - y_dot, 2)
@@ -573,8 +643,9 @@ class Simulation:
         #Fx = 0
         #Fy = 0
 
-        ans = np.array([force_1*Fx,force_2*Fx,force_1*Fy,force_2*Fy])
-        return ans.T
+        ans = np.array([[force_1*Fx,force_2*Fx,force_1*Fy,force_2*Fy]]).T
+        #print(ans.T)
+        return ans
 
     def aerodynamics(self, t, gamma):
         #U = self.speed_series(t)/10
