@@ -9,7 +9,7 @@ import time
 #TESTSIM3 : Biaxial Bending-only Rayleigh-Ritz 2DOF ODE
 
 class Simulation:
-    def __init__(self):#, wind):
+    def __init__(self, wind, beam, strip):
         #Todo: Align primary wind direction with tip bodies
         self.E = 68e9 #Aluminum Young's Modulus Todo: Replace with Material Class that holds these constants
         self.G = 25e9 #Aluminum Shear Modulus
@@ -18,22 +18,27 @@ class Simulation:
         self.c_t = .01 #Defunct
         self.c_b = .01 #Defunct
         self.zeta = .01
-        alpha = 1
-        beta = 0
 
-        self.r = .003175 #.25 inch diameter for now Todo: Determine Geometric Settings, possibly customize
+        self.beam = beam
+        self.strip = strip
+        #alpha = 1
+        #beta = 0
+
+        self.r = .00635 #Update: .5 inch diameter matches piezo strip widths #.25 inch diameter for now Todo: Determine Geometric Settings, possibly customize
         self.b = .01
         self.e = .1 #Defunct: No twist, so moment arm is unnecessary
-        self.L = 1#.25 #Note: Tip bodies and beam have identical length
+        self.L = 1 #2 #1 #.25 #Note: Tip bodies and beam have identical length
 
-        self.U = 2
+        self.U = 10
         self.delta = 0/180*math.pi
-        #self.wind = wind
-        self.duration = 60#*60 #1 hour
+        self.wind = wind
+        self.duration = 60 #1 hour
 
-        self.J = 0.5*math.pi*math.pow(self.r, 4)
-        self.I = 0.25*math.pi*math.pow(self.r, 4)
-        self.A = math.pi*math.pow(self.r, 2)
+        #self.J = 0.5*math.pi*math.pow(self.r, 4) Outdated
+        #self.I = 0.25*math.pi*math.pow(self.r, 4) #Circle
+        #self.A = math.pi*math.pow(self.r, 2) #Circle
+        self.I = math.pow(self.r,4)/12 #Square
+        self.A = math.pow(self.r,2) #Square
 
         self.endurance_limit = 68.95e6 #Endurance Limit in Pa
         self.endurance_crit = -6 #Log10 of inverse cycles at endurance. here there are 10^6 cycles at endurance
@@ -69,14 +74,36 @@ class Simulation:
 
         #self.M_matrix = .5*np.array([[11/420, 643/20160], [643/20160, 437/11340]]).dot(self.rho*self.A*math.pow(self.L,5))
         #self.K_matrix = .5*np.array([[1/3, 5/12], [5/12, 8/15]]).dot(self.E*self.I*self.L)
-        self.K_matrix = .5 * np.array([[1/3, 1/4], [1/4, 1/5]]).dot(self.E * self.I * self.L)
-        self.M_matrix = .5 * np.array([[11/420, 173/20160], [173/20160, 13/810]]).dot(self.rho * self.A * math.pow(self.L, 5))
+
+        self.EI2 = beam.E * (1/12 * math.pow(strip.width,4))
+        self.EI1 = self.EI2 + strip.dEI
+        self.RhoA2 = beam.rho * strip.width * strip.width
+        self.RhoA1 = self.RhoA2 + strip.dRhoA
+        L0 = strip.length
+
+        K11 = .5 * (self.EI2/3*self.L + strip.dEI*L0*(1 - L0/self.L + 1/3*math.pow(L0/self.L,2)) )
+        K12 = .5 * (self.EI2/4*self.L + strip.dEI*L0*(1 - 3/2*(L0/self.L) + math.pow(L0/self.L,2) - math.pow(L0/self.L,3)) )
+        K22 = .5 * (self.EI2/5*self.L + strip.dEI*L0*(1 - 2*L0/self.L + 2*math.pow(L0/self.L,2) - math.pow(L0/self.L,3) + 1/5*math.pow(L0/self.L,4)) )
+
+        M11 = .5 * (self.RhoA2*11/420*math.pow(self.L,5) + strip.dRhoA*math.pow(L0,5)*(1/20 - 1/36*L0/self.L + 1/252*math.pow(L0/self.L,2)) )
+        M12 = .5 * (self.RhoA2*173/20160*math.pow(self.L,5) + strip.dRhoA*math.pow(L0,5)*(1/20 - 1/24*L0/self.L + 1/72*math.pow(L0/self.L,2) - 1/576*math.pow(L0/self.L,3)) )
+        M22 = .5 * (self.RhoA2*13/810*math.pow(self.L,5) + strip.dRhoA*math.pow(L0,5)*(1/20 - 1/18*L0/self.L + 1/36*math.pow(L0/self.L,2) - 1/144*math.pow(L0/self.L,3) + 1/216*math.pow(L0/self.L,4)) )
+
+        self.K_matrix = np.array([[K11, K12], [K12, K22]])
+        self.M_matrix = np.array([[M11, M12], [M12, M22]])
+
+        #self.K_matrix = .5 * np.array([[1/3, 1/4], [1/4, 1/5]]).dot(self.E * self.I * self.L)
+        #self.M_matrix = .5 * np.array([[11/420, 173/20160], [173/20160, 13/810]]).dot(self.rho * self.A * math.pow(self.L,5))
         self.M_inverse = np.linalg.inv(self.M_matrix)
         self.omega_matrix = -1*np.matmul(self.M_inverse,self.K_matrix)
+        #omega_1 = math.sqrt(-self.omega_matrix[0,0])
+        #omega_2 = math.sqrt(-self.omega_matrix[1,1])
+
+
         #self.damp_matrix = -1*np.multiply(np.sign(-1*self.omega_matrix),np.sqrt(abs(self.omega_matrix))).dot(2*self.zeta)
         #self.damp_matrix = -1*np.sqrt(abs(self.omega_matrix)).dot(2 * self.zeta)
-        self.C_matrix = alpha*self.M_matrix + beta*self.K_matrix
-        self.damp_matrix = -1*np.matmul(self.M_inverse,self.C_matrix)
+        #self.C_matrix = alpha*self.M_matrix + beta*self.K_matrix
+        self.damp_matrix = 0*np.matmul(self.M_inverse,self.K_matrix)
         #self.force_vector = self.M_inverse.dot(np.array([[1/3],[5/12]])*self.L*self.L) #/(1/3+5/12))
         self.force_vector = self.M_inverse.dot(np.array([[1/8], [1/10]]) * self.L * self.L)
 
@@ -90,15 +117,25 @@ class Simulation:
         #jac_moment_rows = np.zeros(shape=(2, 10))
 
         self.derivative_matrix = np.concatenate((matrix_top, matrix_x_rows, matrix_y_rows), axis=0)
+        eigs = np.linalg.eig(self.derivative_matrix)[0]
+        omega_1 = math.sqrt(math.pow(np.real(eigs[0]), 2) + math.pow(np.imag(eigs[0]), 2))
+        omega_2 = math.sqrt(math.pow(np.real(eigs[-1]), 2) + math.pow(np.imag(eigs[-1]), 2))
+        beta = 2 * self.zeta / (omega_1 + omega_2)
+        alpha = beta * omega_1 * omega_2
+        self.C_matrix = alpha * self.M_matrix + beta * self.K_matrix
+
         self.derivative_vector_x = np.concatenate((np.zeros(shape=(1,4)),self.force_vector.T,np.zeros(shape=(1,2))), axis=1)[0]
         self.derivative_vector_y = np.concatenate((np.zeros(shape=(1,6)),self.force_vector.T), axis=1)[0]
         #self.jac = np.concatenate((jac_top,jac_x_rows,jac_y_rows,jac_moment_rows), axis=0)
 
         print(self.M_matrix)
+        print("alpha = ",alpha,"beta = ",beta)
+        print(self.C_matrix)
         print(self.K_matrix)
         print(self.M_inverse)
         print(self.omega_matrix)
         print(np.linalg.eig(self.derivative_matrix)[0])
+        print(np.linalg.eig(self.derivative_matrix)[1])
         print(self.damp_matrix)
         print(self.derivative_matrix)
         print(self.derivative_vector_x)
@@ -131,7 +168,9 @@ class Simulation:
         #gamma_0 = np.array([0, 0, 0, 0, 0, 0, .1, .1, .1, .1, .1, .1])
         gamma_0 = np.array([0, 0, 0, 0, .01, .01, .01, .01])
         t0 = 0
-        step_size = 1/4/40 #About one fourth of a period
+        u_0 = np.array([[0, 0, 0, 0]]).T
+        u_dot_0 = np.array([[.01, .01, .01, .01]]).T
+        #step_size = 1/4/40 #About one fourth of a period
         #gamma_0 = np.array([.01, .01, .01, .01, 0, 0, 0, 0])
         #dt = .01
         #t = np.arange(.1, step=dt)
@@ -139,33 +178,49 @@ class Simulation:
             t = (t0, t0+self.duration)
             start = time.time()
             time_series = np.arange(0, self.duration+1)
-            #discrete_wind_series = np.array([self.wind.update() for i in range(0,self.duration+1)])
-            #self.speed_series = sp.interpolate.interp1d(time_series, discrete_wind_series[:,0], fill_value="extrapolate")
-            #self.direction_series = sp.interpolate.interp1d(time_series, discrete_wind_series[:,1], fill_value="extrapolate")
+            discrete_wind_series = np.array([self.wind.update() for i in range(0,self.duration+1)])
+            self.speed_series = sp.interpolate.interp1d(time_series, discrete_wind_series[:,0], fill_value="extrapolate")
+            self.direction_series = sp.interpolate.interp1d(time_series, discrete_wind_series[:,1], fill_value="extrapolate")
 
             #test_wind_series = np.array([[10,-180+360/300*current_second] for current_second in time_series])
             #self.test_speed_series = sp.interpolate.interp1d(time_series, test_wind_series[:,0])
             #self.test_direction_series = sp.interpolate.interp1d(time_series, test_wind_series[:,1])
 
-            #plt.figure()
-            #plt.plot(time_series, discrete_wind_series[:,0], 'b', label="Synthetic Speed")
-            #plt.xlabel("Time [s]")
-            #plt.ylabel("Speed [m/s]")
-            #plt.legend()
-            #plt.figure()
-            #plt.plot(time_series, discrete_wind_series[:,1], 'b', label="Synthetic Direction")
-            #plt.xlabel("Time [s]")
-            #plt.ylabel("Angle [degrees]")
-            #plt.legend()
+            show = True
+            quit = False
+            if show:
+                plt.figure()
+                plt.plot(time_series, discrete_wind_series[:,0], 'b', label="Synthetic Speed")
+                plt.xlabel("Time [s]")
+                plt.ylabel("Speed [m/s]")
+                plt.legend()
+                plt.figure()
+                plt.plot(time_series, discrete_wind_series[:,1], 'b', label="Synthetic Direction")
+                plt.xlabel("Time [s]")
+                plt.ylabel("Angle [degrees]")
+                plt.legend()
+
+                plt.figure()
+                plt.hist(discrete_wind_series[:, 0],bins=math.ceil(max(discrete_wind_series[:, 0])-min(discrete_wind_series[:, 0]))*10)
+                #plt.xlabel("Time [s]")
+                plt.title("Speed [m/s]")
+                #plt.legend()
+                plt.figure()
+                plt.hist(discrete_wind_series[:, 1],bins=math.ceil(max(discrete_wind_series[:, 1])-min(discrete_wind_series[:, 1])))
+                #plt.xlabel("Time [s]")
+                plt.title("Angle [degrees]")
+                #plt.legend()
+                #plt.show()
+
             end = time.time()
             print("Synthetic Wind Series Created. Time Elapsed:",math.floor(end-start),"seconds")
+
             start = time.time()
             dt = 1
             #time_series = np.arange(0,self.duration+dt, step=dt)
-            u_0 = np.array([[0,0,0,0]]).T
-            u_dot_0 = np.array([[.01,.01,.01,.01]]).T
+
             #y = self.old_newmark(u_0,u_dot_0,time_series,dt,.5,.25)
-            [time_series,y] = self.newmark(u_0,u_dot_0,self.duration,dt,1E-3,.9,.5,.25)
+            [time_series,y,y_dot] = self.newmark(u_0,u_dot_0,t0,t0+self.duration,dt,1E-5,.9,.5,.25)
             #solution = solve_ivp(self.derivative, t, gamma_0, method='RK23')#, jac=self.jacobian)#, first_step=step_size)#, jac=self.jacobian)
             end = time.time()
             print("IVP Solved. Time Elapsed:",math.floor(end-start),"seconds")
@@ -239,9 +294,15 @@ class Simulation:
             root_max_bending_stress_y = self.r/self.I*root_moment_y
 
             start = time.time()
-            crit_point_1_bending_stress = -math.sqrt(3)/2*root_max_bending_stress_x + 0.5*root_max_bending_stress_y
+            #Circle
+            #crit_point_1_bending_stress = -math.sqrt(3)/2*root_max_bending_stress_x + 0.5*root_max_bending_stress_y
+            #crit_point_2_bending_stress = root_max_bending_stress_y
+            #crit_point_3_bending_stress = math.sqrt(3)/2*root_max_bending_stress_x + 0.5*root_max_bending_stress_y
+            #Square
+            crit_point_1_bending_stress = -1*root_max_bending_stress_x + root_max_bending_stress_y
             crit_point_2_bending_stress = root_max_bending_stress_y
-            crit_point_3_bending_stress = math.sqrt(3)/2*root_max_bending_stress_x + 0.5*root_max_bending_stress_y
+            crit_point_3_bending_stress = root_max_bending_stress_x + root_max_bending_stress_y
+
             rainflow_1 = [(rng,mean,count,i_start,i_end) for rng,mean,count,i_start,i_end in rf.extract_cycles(crit_point_1_bending_stress)]
             rainflow_2 = [(rng,mean,count,i_start,i_end) for rng,mean,count,i_start,i_end in rf.extract_cycles(crit_point_2_bending_stress)]
             rainflow_3 = [(rng,mean,count,i_start,i_end) for rng, mean, count, i_start, i_end in rf.extract_cycles(crit_point_3_bending_stress)]
@@ -300,7 +361,10 @@ class Simulation:
 
 
             #Reset Loop
-            #t0 = t[1]
+            #break
+            t0 = t[1]
+            u_0 = np.array([y[:,-1]]).T
+            u_dot_0 = y_dot
             #gamma_0 = solution.y[:, -1]
             #step_size = solution.t[-1] - solution.t[-2]
 
@@ -325,62 +389,68 @@ class Simulation:
             #plt.ylabel("Stress [MPa]")
             #plt.legend()
 
-            plt.show()
+            #plt.show()
 
             #Cancel loop (for single-run tests)
-            break
+            #break
 
-        #plt.figure()
-        #plt.plot(solution.t, w_x, 'g', label="w_x")
-        #plt.title("Tip Deflection in X-Direction")
-        #plt.xlabel("Time [s]")
-        #plt.ylabel("Displacement [m]")
-        #plt.legend()
-        #plt.figure()
-        #plt.plot(solution.t, w_y, 'r', label="w_y")
-        #plt.title("Tip Deflection in Y-Direction")
-        #plt.xlabel("Time [s]")
-        #plt.ylabel("Displacement [m]")
-        #plt.legend()
+            #plt.figure()
+            #plt.plot(solution.t, w_x, 'g', label="w_x")
+            #plt.title("Tip Deflection in X-Direction")
+            #plt.xlabel("Time [s]")
+            #plt.ylabel("Displacement [m]")
+            #plt.legend()
+            #plt.figure()
+            #plt.plot(solution.t, w_y, 'r', label="w_y")
+            #plt.title("Tip Deflection in Y-Direction")
+            #plt.xlabel("Time [s]")
+            #plt.ylabel("Displacement [m]")
+            #plt.legend()
 
-        plt.figure()
-        plt.plot(time_series, w_x, 'g', label="w_x")
-        plt.title("Tip Deflection in X-Direction")
-        plt.xlabel("Time [s]")
-        plt.ylabel("Displacement [m]")
-        plt.legend()
-        plt.figure()
-        plt.plot(time_series, w_y, 'r', label="w_y")
-        plt.title("Tip Deflection in Y-Direction")
-        plt.xlabel("Time [s]")
-        plt.ylabel("Displacement [m]")
-        plt.legend()
+            if show:
+                plt.figure()
+                plt.plot(time_series, w_x, 'g', label="w_x")
+                plt.title("Tip Deflection in X-Direction")
+                plt.xlabel("Time [s]")
+                plt.ylabel("Displacement [m]")
+                plt.legend()
+                plt.figure()
+                plt.plot(time_series, w_y, 'r', label="w_y")
+                plt.title("Tip Deflection in Y-Direction")
+                plt.xlabel("Time [s]")
+                plt.ylabel("Displacement [m]")
+                plt.legend()
 
-        #plt.figure()
-        #plt.plot(solution.t, root_moment_x, 'g', label="moment_x")
-        #plt.title("Root X-Moment")
-        #plt.xlabel("Time [s]")
-        #plt.ylabel("Moment [N-m]")
-        #plt.legend()
-        #plt.figure()
-        #plt.plot(solution.t, root_moment_y, 'r', label="moment_y")
-        #plt.title("Root Y-Moment")
-        #plt.xlabel("Time [s]")
-        #plt.ylabel("Moment [N-m]")
-        #plt.legend()
+                #plt.figure()
+                #plt.plot(solution.t, root_moment_x, 'g', label="moment_x")
+                #plt.title("Root X-Moment")
+                #plt.xlabel("Time [s]")
+                #plt.ylabel("Moment [N-m]")
+                #plt.legend()
+                #plt.figure()
+                #plt.plot(solution.t, root_moment_y, 'r', label="moment_y")
+                #plt.title("Root Y-Moment")
+                #plt.xlabel("Time [s]")
+                #plt.ylabel("Moment [N-m]")
+                #plt.legend()
 
-        plt.figure()
-        plt.plot(time_series, root_max_bending_stress_x / 1e6, 'g', label="root_bending_stress_x")
-        plt.title("Maximum Root Bending Stress [X-Moment]")
-        plt.xlabel("Time [s]")
-        plt.ylabel("Stress [MPa]")
-        plt.legend()
-        plt.figure()
-        plt.plot(time_series, root_max_bending_stress_y / 1e6, 'r', label="root_bending_stress_y")
-        plt.title("Maximum Root Bending Stress [Y-Moment]")
-        plt.xlabel("Time [s]")
-        plt.ylabel("Stress [MPa]")
-        plt.legend()
+                plt.figure()
+                plt.plot(time_series, root_max_bending_stress_x / 1e6, 'g', label="root_bending_stress_x")
+                plt.title("Maximum Root Bending Stress [X-Moment]")
+                plt.xlabel("Time [s]")
+                plt.ylabel("Stress [MPa]")
+                plt.legend()
+                plt.figure()
+                plt.plot(time_series, root_max_bending_stress_y / 1e6, 'r', label="root_bending_stress_y")
+                plt.title("Maximum Root Bending Stress [Y-Moment]")
+                plt.xlabel("Time [s]")
+                plt.ylabel("Stress [MPa]")
+                plt.legend()
+
+                plt.show()
+
+                if quit:
+                    break
 
         plt.figure()
         plt.plot(time_series, y[2, :], 'r', label="gamma1_y")
@@ -473,7 +543,8 @@ class Simulation:
         #plt.plot(solution.t, root_shear_x, 'g', label="root_shear_x")
         #plt.plot(solution.t, root_shear_y, 'r', label="root_shear_y")
         #plt.legend()
-        print("Iterations: ",self.iterations)
+
+        #print("Iterations: ",self.iterations)
 
     def derivative(self, t, gamma): #dy/dt function for odeint
         self.iterations += 1
@@ -486,40 +557,40 @@ class Simulation:
         #print(d_gamma_dt)
         return d_gamma_dt
 
-    def newmark(self, u_0, u_dot_0, tf, dt_init, rel_error, shrink_factor, alpha, beta):
+    def newmark(self, u_0, u_dot_0, t0, tf, dt_init, rel_error, shrink_factor, alpha, beta):
 
         #Initialize System Parameters
         M_top = np.concatenate((self.M_matrix, np.zeros(shape=(2,2))), axis=1)
         M_bot = np.concatenate((np.zeros(shape=(2,2)), self.M_matrix), axis=1)
         M = np.concatenate((M_top, M_bot), axis=0)
-        print("M=",M)
+        #print("M=",M)
 
         C_mat = self.C_matrix
         C_top = np.concatenate((C_mat,np.zeros(shape=(2,2))), axis=1)
         C_bot = np.concatenate((np.zeros(shape=(2,2)),C_mat), axis=1)
         C = np.concatenate((C_top,C_bot), axis=0)
 
-        print("C = ",C)
+        #print("C = ",C)
 
         K_top = np.concatenate((self.K_matrix, np.zeros(shape=(2, 2))), axis=1)
         K_bot = np.concatenate((np.zeros(shape=(2, 2)), self.K_matrix), axis=1)
         K = np.concatenate((K_top, K_bot), axis=0)
-        print("K=",K)
+        #print("K=",K)
 
         #Initialize State Vectors
-        time = np.zeros(shape=(1,1))
+        time = t0*np.ones(shape=(1,1))
         #u = np.zeros(shape=(4,1))
         u = u_0
         u_dot_prev = u_dot_0
-        u_ddot_prev = np.linalg.solve(M, self.newmark_aero(u_dot_prev[:])-C.dot(u_dot_prev)-K.dot(u))
+        u_ddot_prev = np.linalg.solve(M, self.newmark_aero(t0,u_dot_prev)-C.dot(u_dot_prev)-K.dot(u))
         #i = 1
         dt = dt_init
         time = np.append(time, time[-1] + dt)
-        print(u)
-        print(u_dot_prev)
-        print(u_ddot_prev)
+        #print(u)
+        #print(u_dot_prev)
+        #print(u_ddot_prev)
         while time[-1] < tf:
-            error_criterion = (rel_error+1)*np.ones(shape=(4,1))
+            error_criterion = 1e6#(rel_error+1)*np.ones(shape=(4,1))
             dt = dt/shrink_factor #Increase time step to prevent premature shortening
             #while all(x > abs_error for x in error_criterion[:,0]):
             while np.linalg.norm(error_criterion) > rel_error*np.linalg.norm(u_dot_prev):
@@ -534,7 +605,7 @@ class Simulation:
                 #u_new = np.array([u_new[:,0]]).T #Normalize and remove repetitive entries
                 #u_dot = np.array([u_dot[:,0]]).T
                 #print(u_dot[:])
-                f_i = self.newmark_aero(u_dot[:])
+                f_i = self.newmark_aero(time[-1]+dt,u_dot)
                 matrix = M + alpha*dt*C + beta*dt*dt*K
                 vector = f_i - C.dot(u_dot) - K.dot(u_new)
                 u_ddot = np.linalg.solve(matrix, vector)
@@ -550,9 +621,9 @@ class Simulation:
             u_ddot_prev = u_ddot
             #i += 1
             time = np.append(time, time[-1] + dt)
-            print(dt)
+            #print(dt)
         time = time[0:len(time)-1]
-        return [time,u]
+        return [time,u,u_dot]
 
     def old_newmark(self, u_0, u_dot_0, time, dt, alpha, beta):
         #full_omega_matrix_top = np.concatenate((self.omega_matrix, np.zeros(shape=(2, 2))), axis=1)
@@ -617,9 +688,12 @@ class Simulation:
             #print(u_ddot[3])
         return u
 
-    def newmark_aero(self,u_dot):
-        U = 10
-        delta = 0/180*math.pi
+    def newmark_aero(self,t,u_dot):
+        U = self.U #5
+        delta = self.delta #0/180*math.pi
+
+        #U = self.speed_series(t)
+        #delta = self.direction_series(t)/180*math.pi
 
         phi_1 = math.pow(self.L,2)/3
         phi_2 = math.pow(self.L,2)/4
@@ -716,8 +790,8 @@ class Simulation:
                 #print(sigma[0])
                 miners_total += math.pow(10, self.miners_function(sigma[0]))
             if(miners_total>=1):
-                print(num,"cycles")
                 break
+        print(num, "cycles")
         return miners_total
 
     def euler_method(self,a0,rainflow):

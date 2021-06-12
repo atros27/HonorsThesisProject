@@ -1,4 +1,5 @@
 import math
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import rv_discrete
 
@@ -28,6 +29,7 @@ class Markov:
             else:
                 for j in range(len(self.histogram[0])):
                     self.histogram[i, j] /= row_sum  # Normalize all speed rows to create PDF rows
+        #print(self.histogram)
 
         #Transform histogram rows to RV variables
         row_range = np.arange(num_rows_and_columns)  #Tuple of all rows
@@ -36,6 +38,17 @@ class Markov:
                 self.TransitionMatrix.append(rv_discrete(values=(row_range, self.histogram[i, :])))
             else:
                 self.TransitionMatrix.append(dummy_random_variable)  # Dummy random variable for unused rows
+
+        means = [var.mean() for var in self.TransitionMatrix]
+        std_devs = [var.std() for var in self.TransitionMatrix]
+
+        plt.figure()
+        plt.plot(range(0,len(means)),means)
+        plt.title("Mean of Each Random Variable")
+
+        plt.figure()
+        plt.plot(range(0,len(std_devs)),std_devs)
+        plt.title("Standard Deviation of Each Random Variable")
 
     def RandomWalk(self, seed):
         index = math.floor(seed * self.resolution) #Transform seed value into a row index

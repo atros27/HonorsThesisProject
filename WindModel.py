@@ -16,6 +16,7 @@ class WindModel:
         sd_data = np.array(sd_data)
         self.initial_state = sd_data[0, :]
         self.current_state = self.initial_state
+        #self.current_state = [1, 0]
         end = time.time()
         print("Sample Wind Data Imported. Time Elapsed:",math.floor(end-start),"seconds")
 
