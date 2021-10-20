@@ -18,27 +18,30 @@ class Simulation:
         self.c_t = .01 #Defunct
         self.c_b = .01 #Defunct
         self.zeta = .01
+        self.rho_tip = 420 #Yellow Pine density in (kg/m^3)
 
         self.beam = beam
         self.strip = strip
         #alpha = 1
         #beta = 0
 
-        self.r = .00635 #Update: .5 inch diameter matches piezo strip widths #.25 inch diameter for now Todo: Determine Geometric Settings, possibly customize
-        self.b = .01
+        self.t = .0015875 #Update: .5 inch diameter matches piezo strip widths #.25 inch diameter for now Todo: Determine Geometric Settings, possibly customize
+        self.b = .0381
         self.e = .1 #Defunct: No twist, so moment arm is unnecessary
-        self.L = 1 #2 #1 #.25 #Note: Tip bodies and beam have identical length
+        self.L = 1.524 #1 #.0586 #3 #.3048 #1 foot #Note: Tip bodies and beam have identical length
 
         self.U = 10
         self.delta = 0/180*math.pi
         self.wind = wind
-        self.duration = 60 #1 hour
+        self.duration = 60*3
 
         #self.J = 0.5*math.pi*math.pow(self.r, 4) Outdated
         #self.I = 0.25*math.pi*math.pow(self.r, 4) #Circle
         #self.A = math.pi*math.pow(self.r, 2) #Circle
-        self.I = math.pow(self.r,4)/12 #Square
-        self.A = math.pow(self.r,2) #Square
+        #self.I = math.pow(2*self.r,4)/12 #Square
+        #self.A = math.pow(2*self.r,2) #Square
+        self.I = (math.pow(self.b,4)-math.pow(self.b-2*self.t,4))/12 #Square Tube
+        self.A = math.pow(self.b,2)-math.pow(self.b-2*self.t,2) #Square Tube
 
         self.endurance_limit = 68.95e6 #Endurance Limit in Pa
         self.endurance_crit = -6 #Log10 of inverse cycles at endurance. here there are 10^6 cycles at endurance
@@ -47,7 +50,7 @@ class Simulation:
 
         self.C = 8.87e-8
         self.m = 3.14
-        a_per_width = np.array([0.1, 0.2, 0.3, 0.4, 0.5])*2*self.r
+        a_per_width = np.array([0.1, 0.2, 0.3, 0.4, 0.5])*self.b
         faw = [1.044, 1.055, 1.125, 1.257, 1.5]
         self.f_factor = sp.interpolate.interp1d(a_per_width, faw, fill_value="extrapolate")
 
@@ -89,8 +92,10 @@ class Simulation:
         M12 = .5 * (self.RhoA2*173/20160*math.pow(self.L,5) + strip.dRhoA*math.pow(L0,5)*(1/20 - 1/24*L0/self.L + 1/72*math.pow(L0/self.L,2) - 1/576*math.pow(L0/self.L,3)) )
         M22 = .5 * (self.RhoA2*13/810*math.pow(self.L,5) + strip.dRhoA*math.pow(L0,5)*(1/20 - 1/18*L0/self.L + 1/36*math.pow(L0/self.L,2) - 1/144*math.pow(L0/self.L,3) + 1/216*math.pow(L0/self.L,4)) )
 
+        m_tip_matrix = .5*self.rho_tip*self.b*self.b*math.pow(self.L,5)*np.array([[1/9, 1/12],[1/12, 1/16]])
+
         self.K_matrix = np.array([[K11, K12], [K12, K22]])
-        self.M_matrix = np.array([[M11, M12], [M12, M22]])
+        self.M_matrix = np.array([[M11, M12], [M12, M22]]) + m_tip_matrix
 
         #self.K_matrix = .5 * np.array([[1/3, 1/4], [1/4, 1/5]]).dot(self.E * self.I * self.L)
         #self.M_matrix = .5 * np.array([[11/420, 173/20160], [173/20160, 13/810]]).dot(self.rho * self.A * math.pow(self.L,5))
@@ -120,14 +125,41 @@ class Simulation:
         eigs = np.linalg.eig(self.derivative_matrix)[0]
         omega_1 = math.sqrt(math.pow(np.real(eigs[0]), 2) + math.pow(np.imag(eigs[0]), 2))
         omega_2 = math.sqrt(math.pow(np.real(eigs[-1]), 2) + math.pow(np.imag(eigs[-1]), 2))
-        beta = 2 * self.zeta / (omega_1 + omega_2)
-        alpha = beta * omega_1 * omega_2
-        self.C_matrix = alpha * self.M_matrix + beta * self.K_matrix
+
+        #beta = 2 * self.zeta / (omega_1 + omega_2)
+        #alpha = beta * omega_1 * omega_2
+
+        #self.C_matrix = alpha * self.M_matrix + beta * self.K_matrix
 
         self.derivative_vector_x = np.concatenate((np.zeros(shape=(1,4)),self.force_vector.T,np.zeros(shape=(1,2))), axis=1)[0]
         self.derivative_vector_y = np.concatenate((np.zeros(shape=(1,6)),self.force_vector.T), axis=1)[0]
         #self.jac = np.concatenate((jac_top,jac_x_rows,jac_y_rows,jac_moment_rows), axis=0)
 
+        #Rayleigh Method of Eigenvalue Approximation
+        #F = np.array([[self.M_matrix[0,0]],[self.M_matrix[1,1]]])
+        U1 = np.array([[1],[0]])#np.linalg.solve(self.K_matrix,F)
+        U2=  np.array([[0],[1]])
+        numer = U1.T.dot(self.K_matrix.dot(U1))
+        denom = U1.T.dot(self.M_matrix.dot(U1))
+        numer2 = U2.T.dot(self.K_matrix.dot(U2))
+        denom2 = U2.T.dot(self.M_matrix.dot(U2))
+        omega_squared = numer/denom
+        omega_squared2 = numer2/denom2
+        omega1 = math.sqrt(omega_squared)
+        omega2 = math.sqrt(omega_squared2)
+
+        #beta = .001#2*self.zeta/math.sqrt(omega_squared)
+        #alpha = 2*self.zeta*math.sqrt(omega_squared)
+        alpha = 2*self.zeta*omega1*omega2/(omega1+omega2)
+        beta = 2*self.zeta/(omega1+omega2)
+        self.C_matrix = alpha * self.M_matrix + beta * self.K_matrix
+
+        print("omega_1=",omega_1)
+        print("omega_2=",omega_2)
+        print("omega1=",omega1)
+        print("omega2=",omega2)
+        print("EI1 =",self.EI1)
+        print("EI2 = ",self.EI2)
         print(self.M_matrix)
         print("alpha = ",alpha,"beta = ",beta)
         print(self.C_matrix)
@@ -200,17 +232,17 @@ class Simulation:
                 plt.ylabel("Angle [degrees]")
                 plt.legend()
 
-                plt.figure()
-                plt.hist(discrete_wind_series[:, 0],bins=math.ceil(max(discrete_wind_series[:, 0])-min(discrete_wind_series[:, 0]))*10)
+                #plt.figure()
+                #plt.hist(discrete_wind_series[:, 0],bins=math.ceil(max(discrete_wind_series[:, 0])-min(discrete_wind_series[:, 0]))*10)
                 #plt.xlabel("Time [s]")
-                plt.title("Speed [m/s]")
+                #plt.title("Speed [m/s]")
                 #plt.legend()
-                plt.figure()
-                plt.hist(discrete_wind_series[:, 1],bins=math.ceil(max(discrete_wind_series[:, 1])-min(discrete_wind_series[:, 1])))
+                #plt.figure()
+                #plt.hist(discrete_wind_series[:, 1],bins=math.ceil(max(discrete_wind_series[:, 1])-min(discrete_wind_series[:, 1])))
                 #plt.xlabel("Time [s]")
-                plt.title("Angle [degrees]")
+                #plt.title("Angle [degrees]")
                 #plt.legend()
-                #plt.show()
+                plt.show()
 
             end = time.time()
             print("Synthetic Wind Series Created. Time Elapsed:",math.floor(end-start),"seconds")
@@ -220,7 +252,7 @@ class Simulation:
             #time_series = np.arange(0,self.duration+dt, step=dt)
 
             #y = self.old_newmark(u_0,u_dot_0,time_series,dt,.5,.25)
-            [time_series,y,y_dot] = self.newmark(u_0,u_dot_0,t0,t0+self.duration,dt,1E-5,.9,.5,.25)
+            [time_series,y,y_dot] = self.newmark(u_0,u_dot_0,t0,t0+self.duration,dt,1E-7,1E-12,.9,.5,0)
             #solution = solve_ivp(self.derivative, t, gamma_0, method='RK23')#, jac=self.jacobian)#, first_step=step_size)#, jac=self.jacobian)
             end = time.time()
             print("IVP Solved. Time Elapsed:",math.floor(end-start),"seconds")
@@ -271,8 +303,10 @@ class Simulation:
             #root_moment_x = self.E*self.I*(solution.y[0, :]+solution.y[1,:])
             #root_moment_y = self.E*self.I*(solution.y[2, :]+solution.y[3,:])
 
-            root_moment_x = self.E*self.I*(y[0, :]+y[1,:])
-            root_moment_y = self.E*self.I*(y[2, :]+y[3,:])
+            #root_moment_x = self.E*self.I*(y[0, :]+y[1,:])
+            #root_moment_y = self.E*self.I*(y[2, :]+y[3,:])
+            root_moment_x = self.EI1*(y[0, :]+y[1,:])
+            root_moment_y = self.EI1*(y[2, :]+y[3,:])
 
             #start = time.time()
             #root_moment_x = self.differentiate(solution.t,solution.y[8,:])
@@ -290,8 +324,8 @@ class Simulation:
 
             #root_shear_x = tip_shear_x
             #root_shear_y = tip_shear_y
-            root_max_bending_stress_x = self.r/self.I*root_moment_x
-            root_max_bending_stress_y = self.r/self.I*root_moment_y
+            root_max_bending_stress_x = self.b/2/self.I*root_moment_x
+            root_max_bending_stress_y = self.b/2/self.I*root_moment_y
 
             start = time.time()
             #Circle
@@ -413,13 +447,13 @@ class Simulation:
                 plt.title("Tip Deflection in X-Direction")
                 plt.xlabel("Time [s]")
                 plt.ylabel("Displacement [m]")
-                plt.legend()
+                #plt.legend()
                 plt.figure()
                 plt.plot(time_series, w_y, 'r', label="w_y")
                 plt.title("Tip Deflection in Y-Direction")
                 plt.xlabel("Time [s]")
                 plt.ylabel("Displacement [m]")
-                plt.legend()
+                #plt.legend()
 
                 #plt.figure()
                 #plt.plot(solution.t, root_moment_x, 'g', label="moment_x")
@@ -439,13 +473,13 @@ class Simulation:
                 plt.title("Maximum Root Bending Stress [X-Moment]")
                 plt.xlabel("Time [s]")
                 plt.ylabel("Stress [MPa]")
-                plt.legend()
+                #plt.legend()
                 plt.figure()
                 plt.plot(time_series, root_max_bending_stress_y / 1e6, 'r', label="root_bending_stress_y")
                 plt.title("Maximum Root Bending Stress [Y-Moment]")
                 plt.xlabel("Time [s]")
                 plt.ylabel("Stress [MPa]")
-                plt.legend()
+                #plt.legend()
 
                 plt.show()
 
@@ -462,6 +496,10 @@ class Simulation:
         plt.title("Mode 2 [Y-Direction]")
         plt.xlabel("Time [s]")
         plt.legend()
+
+        gamma2_over_1 = max(y[3,:])/max(y[2,:])
+        print("Mode Ratio (gamma2/1 = ",gamma2_over_1)
+        print("Maximum Moment =",max(root_moment_y))
 
         #plt.figure()
         #plt.plot(time_series, y[3, :] / y[2, :], 'r', label="gamma2/gamma1_y")
@@ -557,7 +595,7 @@ class Simulation:
         #print(d_gamma_dt)
         return d_gamma_dt
 
-    def newmark(self, u_0, u_dot_0, t0, tf, dt_init, rel_error, shrink_factor, alpha, beta):
+    def newmark(self, u_0, u_dot_0, t0, tf, dt_init, rel_error, threshold_error, shrink_factor, alpha, beta):
 
         #Initialize System Parameters
         M_top = np.concatenate((self.M_matrix, np.zeros(shape=(2,2))), axis=1)
@@ -585,17 +623,21 @@ class Simulation:
         u_ddot_prev = np.linalg.solve(M, self.newmark_aero(t0,u_dot_prev)-C.dot(u_dot_prev)-K.dot(u))
         #i = 1
         dt = dt_init
+        dt_prev = dt
         time = np.append(time, time[-1] + dt)
         #print(u)
         #print(u_dot_prev)
         #print(u_ddot_prev)
         while time[-1] < tf:
-            error_criterion = 1e6#(rel_error+1)*np.ones(shape=(4,1))
+            error_criterion = 1e6 #(rel_error+1)*np.ones(shape=(4,1))
             dt = dt/shrink_factor #Increase time step to prevent premature shortening
             #while all(x > abs_error for x in error_criterion[:,0]):
-            while np.linalg.norm(error_criterion) > rel_error*np.linalg.norm(u_dot_prev):
+            while np.linalg.norm(error_criterion) > rel_error*np.linalg.norm(u_dot_prev) or np.linalg.norm(error_criterion) < threshold_error*np.linalg.norm(u_dot_prev):
                 #Shorten time steps for each failed iteration
-                dt = dt*shrink_factor
+                if np.linalg.norm(error_criterion) > rel_error*np.linalg.norm(u_dot_prev):
+                    dt = dt*shrink_factor
+                else:
+                    dt = dt/shrink_factor
 
                 #Update (or try to Update again)
                 u_new = np.array([u[:,-1]]).T + u_dot_prev*dt + dt*dt/2*(1-2*beta)*u_ddot_prev
@@ -621,7 +663,10 @@ class Simulation:
             u_ddot_prev = u_ddot
             #i += 1
             time = np.append(time, time[-1] + dt)
-            #print(dt)
+
+            if (dt != dt_prev):
+                1#print(dt)
+            dt_prev = dt
         time = time[0:len(time)-1]
         return [time,u,u_dot]
 
