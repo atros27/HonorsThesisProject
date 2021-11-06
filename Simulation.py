@@ -29,11 +29,16 @@ class Simulation:
         self.b = .0381
         self.e = .1 #Defunct: No twist, so moment arm is unnecessary
         self.L = 1.524 #1 #.0586 #3 #.3048 #1 foot #Note: Tip bodies and beam have identical length
+        self.Rp = 1E6
+        self.Rl = 1E3
+        self.R = self.Rp*self.Rl/(self.Rp+self.Rl)
+        self.Cp = 15E-9
+        self.theta = 662.7E-6
 
-        self.U = 10
-        self.delta = 0/180*math.pi
+        #self.U = 4
+        #self.delta = 0/180*math.pi
         self.wind = wind
-        self.duration = 60*3
+        self.duration = 60*5
 
         #self.J = 0.5*math.pi*math.pow(self.r, 4) Outdated
         #self.I = 0.25*math.pi*math.pow(self.r, 4) #Circle
@@ -97,6 +102,11 @@ class Simulation:
         self.K_matrix = np.array([[K11, K12], [K12, K22]])
         self.M_matrix = np.array([[M11, M12], [M12, M22]]) + m_tip_matrix
 
+        self.theta_couple = -self.theta/2*np.array([[1], [1]])
+        self.capacitance = self.Cp*np.identity(2)
+        self.resistance = 1/self.R*np.identity(2)
+        self.theta_couple2 = self.theta*np.array([math.pow(self.L,2)/3, math.pow(self.L,2)/4])
+
         #self.K_matrix = .5 * np.array([[1/3, 1/4], [1/4, 1/5]]).dot(self.E * self.I * self.L)
         #self.M_matrix = .5 * np.array([[11/420, 173/20160], [173/20160, 13/810]]).dot(self.rho * self.A * math.pow(self.L,5))
         self.M_inverse = np.linalg.inv(self.M_matrix)
@@ -150,8 +160,8 @@ class Simulation:
 
         #beta = .001#2*self.zeta/math.sqrt(omega_squared)
         #alpha = 2*self.zeta*math.sqrt(omega_squared)
-        alpha = 2*self.zeta*omega1*omega2/(omega1+omega2)
-        beta = 2*self.zeta/(omega1+omega2)
+        alpha = self.zeta*omega1*omega2/(omega1+omega2)
+        beta = self.zeta/(omega1+omega2)
         self.C_matrix = alpha * self.M_matrix + beta * self.K_matrix
 
         print("omega_1=",omega_1)
@@ -252,7 +262,7 @@ class Simulation:
             #time_series = np.arange(0,self.duration+dt, step=dt)
 
             #y = self.old_newmark(u_0,u_dot_0,time_series,dt,.5,.25)
-            [time_series,y,y_dot] = self.newmark(u_0,u_dot_0,t0,t0+self.duration,dt,1E-7,1E-12,.9,.5,0)
+            [time_series,y,y_dot] = self.newmark2(u_0,u_dot_0,t0,t0+self.duration,dt,1E-3,1E-5,.9,.5,.25)
             #solution = solve_ivp(self.derivative, t, gamma_0, method='RK23')#, jac=self.jacobian)#, first_step=step_size)#, jac=self.jacobian)
             end = time.time()
             print("IVP Solved. Time Elapsed:",math.floor(end-start),"seconds")
@@ -305,6 +315,7 @@ class Simulation:
 
             #root_moment_x = self.E*self.I*(y[0, :]+y[1,:])
             #root_moment_y = self.E*self.I*(y[2, :]+y[3,:])
+
             root_moment_x = self.EI1*(y[0, :]+y[1,:])
             root_moment_y = self.EI1*(y[2, :]+y[3,:])
 
@@ -324,8 +335,11 @@ class Simulation:
 
             #root_shear_x = tip_shear_x
             #root_shear_y = tip_shear_y
+
             root_max_bending_stress_x = self.b/2/self.I*root_moment_x
             root_max_bending_stress_y = self.b/2/self.I*root_moment_y
+            #root_max_bending_stress_x = self.E*self.b/2*(y[0, :]+y[1,:])
+            #root_max_bending_stress_y = self.E * self.b / 2 * (y[2, :] + y[3, :])
 
             start = time.time()
             #Circle
@@ -670,6 +684,89 @@ class Simulation:
         time = time[0:len(time)-1]
         return [time,u,u_dot]
 
+    def newmark2(self, u_0, u_dot_0, t0, tf, dt_init, rel_error, threshold_error, shrink_factor, alpha, beta):
+
+        #Initialize System Parameters
+        M_top = np.concatenate((self.M_matrix, np.zeros(shape=(2,2))), axis=1)
+        M_bot = np.concatenate((np.zeros(shape=(2,2)), self.M_matrix), axis=1)
+        M0 = np.concatenate((M_top, M_bot), axis=0)
+        M_top = np.concatenate((M0, np.zeros(shape=(4,2))), axis=1)
+        M = np.concatenate((M_top, np.zeros(2,6)), axis=0)
+        #print("M=",M)
+
+        C_mat = self.C_matrix
+        C_top = np.concatenate((C_mat,np.zeros(shape=(2,2))), axis=1)
+        C_bot = np.concatenate((np.zeros(shape=(2,2)),C_mat), axis=1)
+        C0 = np.concatenate((C_top,C_bot), axis=0)
+        C_top = np.concatenate((C0, np.zeros(shape=(4,2))), axis=1)
+        C_bottom_left_top = np.concatenate((self.theta_couple2, np.zeros(shape=(1,2))), axis=1)
+        C_bottom_left_bottom = np.concatenate((np.zeros(shape=(1,2)), self.theta_couple2), axis=1)
+        C_bottom_left = np.concatenate((C_bottom_left_top, C_bottom_left_bottom), axis=0)
+        C_bottom = np.concatenate((C_bottom_left, self.capacitance), axis=1)
+        C = np.concatenate((C_top, C_bottom), axis=0)
+        #print("C = ",C)
+
+        K_top = np.concatenate((self.K_matrix, np.zeros(shape=(2, 2))), axis=1)
+        K_bot = np.concatenate((np.zeros(shape=(2, 2)), self.K_matrix), axis=1)
+        K0 = np.concatenate((K_top, K_bot), axis=0)
+        K_top_right_top = np.concatenate((self.theta_couple, np.zeros(shape=(2,1))), axis=1)
+        K_top_right_bottom = np.concatenate((np.zeros(shape=(1,2)), self.theta_couple), axis=1)
+        K_top_right = np.concatenate((K_top_right_top, K_top_right_bottom), axis=0)
+        K_top = np.concatenate((K0, K_top_right), axis=1)
+        K_bottom = np.concatenate((np.zeros(shape=(2,4)), self.resistance), axis=1)
+        K = np.concatenate((K_top, K_bottom), axis=0)
+        #print("K=",K)
+
+        #Initialize State Vectors
+        time = t0*np.ones(shape=(1,1))
+        #u = np.zeros(shape=(4,1))
+        u = u_0
+        u_dot_prev = u_dot_0
+        u_ddot_prev = np.linalg.solve(M, self.newmark_aero(t0,u_dot_prev)-C.dot(u_dot_prev)-K.dot(u))
+        #i = 1
+        dt = dt_init
+        dt_prev = dt
+        time = np.append(time, time[-1] + dt)
+        #print(u)
+        #print(u_dot_prev)
+        #print(u_ddot_prev)
+        while time[-1] < tf:
+            error_criterion = 1e6 #(rel_error+1)*np.ones(shape=(4,1))
+            dt = dt/shrink_factor #Increase time step to prevent premature shortening
+            #while all(x > abs_error for x in error_criterion[:,0]):
+            while np.linalg.norm(error_criterion) > rel_error*np.linalg.norm(u_dot_prev) or np.linalg.norm(error_criterion) < threshold_error*np.linalg.norm(u_dot_prev):
+                #Shorten time steps for each failed iteration
+                if np.linalg.norm(error_criterion) > rel_error*np.linalg.norm(u_dot_prev):
+                    dt = dt*shrink_factor
+                else:
+                    dt = dt/shrink_factor
+
+                #Update (or try to Update again)
+                f_i = self.newmark_aero(time[-1]+dt,u_dot_prev)
+                A = M/beta/dt/dt + alpha/beta/dt*C + K
+                B = f_i + M.dot( np.array([u[:,-1]]).T/beta/dt/dt + u_dot_prev/beta/dt + (1/2/beta-1)*u_ddot_prev ) + C.dot(alpha/beta/dt*np.array([u[:,-1]]).T - (1-alpha/beta)*u_dot_prev - dt*(1-alpha/2/beta)*u_ddot_prev)
+                u_new = np.linalg.solve(A,B)
+                u_ddot = (u_new - np.array([u[:,-1]]).T) / beta / dt / dt - u_dot_prev / beta / dt - (1 / 2 / beta - 1) * u_ddot_prev
+                u_dot = u_dot_prev + dt*(1-alpha)*u_ddot_prev + dt*alpha*u_ddot
+
+                #Eval Error Criterion
+                error_criterion = abs((beta-1/6)*dt*dt*(u_ddot - u_ddot_prev))
+
+            #Finalize new state
+            u = np.append(u, u_new, axis=1)
+
+            #Reset Names
+            u_dot_prev = u_dot
+            u_ddot_prev = u_ddot
+            #i += 1
+            time = np.append(time, time[-1] + dt)
+
+            if (dt != dt_prev):
+                print(dt)
+            dt_prev = dt
+        time = time[0:len(time)-1]
+        return [time,u,u_dot]
+
     def old_newmark(self, u_0, u_dot_0, time, dt, alpha, beta):
         #full_omega_matrix_top = np.concatenate((self.omega_matrix, np.zeros(shape=(2, 2))), axis=1)
         #full_omega_matrix_bottom = np.concatenate((np.zeros(shape=(2,2)),self.omega_matrix), axis=1)
@@ -734,11 +831,11 @@ class Simulation:
         return u
 
     def newmark_aero(self,t,u_dot):
-        U = self.U #5
-        delta = self.delta #0/180*math.pi
+        #U = self.U #5
+        #delta = self.delta #0/180*math.pi
 
-        #U = self.speed_series(t)
-        #delta = self.direction_series(t)/180*math.pi
+        U = self.speed_series(t)
+        delta = self.direction_series(t)/180*math.pi
 
         phi_1 = math.pow(self.L,2)/3
         phi_2 = math.pow(self.L,2)/4
@@ -762,7 +859,7 @@ class Simulation:
         #Fx = 0
         #Fy = 0
 
-        ans = np.array([[force_1*Fx,force_2*Fx,force_1*Fy,force_2*Fy]]).T
+        ans = np.array([[force_1*Fx,force_2*Fx,force_1*Fy,force_2*Fy, 0, 0]]).T
         #print(ans.T)
         return ans
 
