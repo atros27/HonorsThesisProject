@@ -5,6 +5,7 @@ from Strip import Strip
 from TestSim1 import TestSim1
 from TestSim2 import TestSim2
 from TestSim3 import TestSim3
+import numpy as np
 import time
 from WindModel import WindModel
 
@@ -21,8 +22,13 @@ def __main__():
     pvc = Material("Rigid PVC",False,3.275e9,1467,52e6,(16.5e6,7))
     brass = Material("Brass",False,100e9,8.73e3,250e6,(100e6,8)) #70Cu-30Zn Brass
     pzt = Material("PZT (Lead Zirconate Titanate",True,63e9,7.6e3,80e6,(60e6,5),1.8e-10) #FINISH
-    strip = Strip(brass,inch2meter*5e-3,pzt,inch2meter*7.5e-3,inch2meter*0.5,inch2meter*1.25)
-    Simulation_1 = Simulation(WindModel_1,aluminum7075,strip)
+    strip = Strip(brass,inch2meter*0,pzt,inch2meter*7.5e-3,inch2meter*1.5,inch2meter*3)
+    lengths = np.arange(0.5,3,step=0.25)
+    for L in lengths:
+        filename = "L_"+str(L)
+        filename = filename.replace('.','')
+        Simulation_1 = Simulation(WindModel_1,aluminum7075,strip,L,filename)
+
     #Simulation_1 = Simulation(WindModel_1, pvc, strip)
     #TestSim3_1 = TestSim3()
     #print(WindModel_1.results.summary())

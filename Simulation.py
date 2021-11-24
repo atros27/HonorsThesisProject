@@ -1,3 +1,4 @@
+import csv
 from collections import deque
 import math
 import matplotlib.pyplot as plt
@@ -10,9 +11,9 @@ import time
 #TESTSIM3 : Biaxial Bending-only Rayleigh-Ritz 2DOF ODE
 
 class Simulation:
-    def __init__(self, wind, beam, strip):
-        #Todo: Align primary wind direction with tip bodies
-        self.E = 68e9 #Aluminum Young's Modulus Todo: Replace with Material Class that holds these constants
+    def __init__(self, wind, beam, strip, length, filename):
+        self.filename = filename
+        self.E = 68e9 #Aluminum Young's Modulus
         self.G = 25e9 #Aluminum Shear Modulus
         self.rho = 2.71e3 #kg/m^3
         self.air_density = 1.2 #kg/m^3
@@ -26,10 +27,10 @@ class Simulation:
         #alpha = 1
         #beta = 0
 
-        self.t = .0015875 #Update: .5 inch diameter matches piezo strip widths #.25 inch diameter for now Todo: Determine Geometric Settings, possibly customize
+        self.t = .0015875 #Update: .5 inch diameter matches piezo strip widths #.25 inch diameter for now
         self.b = .0381
         self.e = .1 #Defunct: No twist, so moment arm is unnecessary
-        self.L = 1.524 #1 #.0586 #3 #.3048 #1 foot #Note: Tip bodies and beam have identical length
+        self.L = length#1.524 #1 #.0586 #3 #.3048 #1 foot #Note: Tip bodies and beam have identical length
         self.Rp = 1E6
         self.Rl = 1E3
         self.R = self.Rp*self.Rl/(self.Rp+self.Rl)
@@ -55,8 +56,10 @@ class Simulation:
         self.fail_limit = 482.63e6 #Ultimate Tensile Strength in Pa
         self.miners_function = sp.interpolate.interp1d([self.endurance_limit, self.fail_limit], [self.endurance_crit, 0], fill_value="extrapolate")
 
-        self.C = 8.87e-8
         self.m = 3.14
+        self.C = 8.87e-11
+        self.beam_crack_consts = (self.C,self.m)
+        self.strip_crack_consts = (9.27e-6,11.8) #Should be 22.3
         a_per_width = np.array([0.1, 0.2, 0.3, 0.4, 0.5])*self.b
         faw = [1.044, 1.055, 1.125, 1.257, 1.5]
         self.f_factor = sp.interpolate.interp1d(a_per_width, faw, fill_value="extrapolate")
@@ -221,17 +224,18 @@ class Simulation:
         while max(self.miners_criteria)<1:
             t = (t0, t0+self.duration)
             start = time.time()
-            time_series = np.arange(0, self.duration+1)
-            discrete_wind_series = np.array([self.wind.update() for i in range(0,self.duration+1)])
-            self.speed_series = sp.interpolate.interp1d(time_series, discrete_wind_series[:,0], fill_value="extrapolate")
-            self.direction_series = sp.interpolate.interp1d(time_series, discrete_wind_series[:,1], fill_value="extrapolate")
+            self.time_series = np.arange(0, self.duration+1)
+            self.discrete_wind_series = np.array([self.wind.update() for i in range(0,self.duration+1)])
+            self.last_second = t[1]
+            self.speed_series = sp.interpolate.interp1d(self.time_series, self.discrete_wind_series[:,0], fill_value="extrapolate")
+            self.direction_series = sp.interpolate.interp1d(self.time_series, self.discrete_wind_series[:,1], fill_value="extrapolate")
 
             #test_wind_series = np.array([[10,-180+360/300*current_second] for current_second in time_series])
             #self.test_speed_series = sp.interpolate.interp1d(time_series, test_wind_series[:,0])
             #self.test_direction_series = sp.interpolate.interp1d(time_series, test_wind_series[:,1])
 
             show = False
-            quit = False
+            quit = True
             if show:
                 plt.figure()
                 plt.plot(time_series, discrete_wind_series[:,0], 'b', label="Synthetic Speed")
@@ -264,8 +268,8 @@ class Simulation:
             #time_series = np.arange(0,self.duration+dt, step=dt)
 
             #y = self.old_newmark(u_0,u_dot_0,time_series,dt,.5,.25)
-            [duration,cycles] = self.newmark2(u_0,u_dot_0,t0,t0+self.duration,dt,1E-5,1E-8,.9,.5,.25)
-            print("Simulation Duration: ",duration)
+            [lifetime,cycles,tip_disps,stresses,voltages,cracks] = self.newmark2(u_0,u_dot_0,t0,dt,1E-5,1E-8,.9,.5,.25)
+            print("Simulation Duration: ",lifetime," seconds")
             print("Number of Cycles: ",len(cycles))
             #print(cycles)
             #solution = solve_ivp(self.derivative, t, gamma_0, method='RK23')#, jac=self.jacobian)#, first_step=step_size)#, jac=self.jacobian)
@@ -274,6 +278,31 @@ class Simulation:
             #print("HU: ",info.get('hu'))
             #print("NST: ",info.get('nst'))
             #print("NFE: ",info.get('nfe'))
+
+            with open(self.filename+"_tipdisp.csv",'w',newline='') as csvfile:
+                tipdisp_writer = csv.writer(csvfile, delimiter=' ')
+                for item in tip_disps:
+                    tipdisp_writer.writerow([i for i in item])
+            csvfile.close()
+
+            with open(self.filename+"_stress.csv",'w',newline='') as csvfile:
+                stress_writer = csv.writer(csvfile, delimiter=' ')
+                for item in stresses:
+                    stress_writer.writerow([i for i in item])
+            csvfile.close()
+
+            with open(self.filename+"_voltage.csv",'w',newline='') as csvfile:
+                voltage_writer = csv.writer(csvfile, delimiter=' ')
+                for item in voltages:
+                    voltage_writer.writerow([i for i in item])
+            csvfile.close()
+
+            with open(self.filename+"_crack.csv",'w',newline='') as csvfile:
+                crack_writer = csv.writer(csvfile, delimiter=' ')
+                for item in cracks:
+                    crack_writer.writerow([i for i in item])
+            csvfile.close()
+
 
             #TEST: Euler's method by hand
             #solution = np.ndarray(shape=(len(t), 12))
@@ -309,12 +338,13 @@ class Simulation:
             #Current One
             #w_x = math.pow(self.L, 2) / 3 * y[0, :] + 1 / 4 * math.pow(self.L, 2) * y[1, :]
             #w_y = math.pow(self.L, 2) / 3 * y[2, :] + 1 / 4 * math.pow(self.L, 2) * y[3, :]
-            w_x_ampl = math.pow(self.L, 2) / 3 * (cycles[:][1][0]-cycles[:][0][0])/2 + 1 / 4 * math.pow(self.L, 2) * (cycles[:][1][1]-cycles[:][0][1])/2
-            w_x_mean = math.pow(self.L, 2) / 3 * (cycles[:][1][0]+cycles[:][0][0])/2 + 1 / 4 * math.pow(self.L,2) * (cycles[:][1][1]+cycles[:][0][1])/2
-            w_y_ampl = math.pow(self.L, 2) / 3 * (cycles[:][1][2]-cycles[:][0][2])/2 + 1 / 4 * math.pow(self.L,2) * (cycles[:][1][3] - cycles[:][0][3])/2
-            w_y_mean = math.pow(self.L, 2) / 3 * (cycles[:][1][2]+cycles[:][0][2])/2 + 1 / 4 * math.pow(self.L,2) * (cycles[:][1][3] - cycles[:][0][3])/2
-            v_x_ampl = cycles[:][1][4]
-            v_y_ampl = cycles[:][1][5]
+
+            #w_x_ampl = [math.pow(self.L, 2) / 3 * (cycles[i][1][0]-cycles[i][0][0])/2 + 1 / 4 * math.pow(self.L, 2) * (cycles[i][1][1]-cycles[i][0][1])/2 for i in range(0,len(cycles))]
+            #w_x_mean = [math.pow(self.L, 2) / 3 * (cycles[i][1][0]+cycles[i][0][0])/2 + 1 / 4 * math.pow(self.L,2) * (cycles[i][1][1]+cycles[i][0][1])/2 for i in range(0,len(cycles))]
+            #w_y_ampl = [math.pow(self.L, 2) / 3 * (cycles[i][1][2]-cycles[i][0][2])/2 + 1 / 4 * math.pow(self.L,2) * (cycles[i][1][3]-cycles[i][0][3])/2 for i in range(0,len(cycles))]
+            #w_y_mean = [math.pow(self.L, 2) / 3 * (cycles[i][1][2]+cycles[i][0][2])/2 + 1 / 4 * math.pow(self.L,2) * (cycles[i][1][3]+cycles[i][0][3])/2 for i in range(0,len(cycles))]
+            #v_x_ampl = [cycles[i][1][4] for i in range(0,len(cycles))]
+            #v_y_ampl = [cycles[i][1][5] for i in range(0,len(cycles))]
 
             #tip_moment_x = self.E*self.I*((2/self.L/self.L)*solution.y[0, :] + (6/self.L/self.L)*solution.y[1, :])
             #tip_moment_y = self.E*self.I*((2/self.L/self.L)*solution.y[2, :] + (6/self.L/self.L)*solution.y[3, :])
@@ -332,14 +362,14 @@ class Simulation:
             #Current One
             #root_moment_x = self.EI1*(y[0, :]+y[1,:])
             #root_moment_y = self.EI1*(y[2, :]+y[3,:])
-            beam_moment_x_ampl = self.EI2*( (cycles[:][1][0]-cycles[:][0][0])/2 + (cycles[:][1][1]-cycles[:][0][1])/2 )
-            beam_moment_x_mean = self.EI2*( (cycles[:][1][0]+cycles[:][0][0])/2 + (cycles[:][1][1]+cycles[:][0][1])/2 )
-            beam_moment_y_ampl = self.EI2*( (cycles[:][1][2]-cycles[:][0][2])/2 + (cycles[:][1][3]-cycles[:][0][3])/2 )
-            beam_moment_y_mean = self.EI2*( (cycles[:][1][2]+cycles[:][0][2])/2 + (cycles[:][1][3]+cycles[:][0][3])/2 )
-            bar_moment_x_ampl = (self.EI1-self.EI2)*( (cycles[:][1][0]-cycles[:][0][0])/2 + (cycles[:][1][1]-cycles[:][0][1])/2 )
-            bar_moment_x_mean = (self.EI1-self.EI2)*( (cycles[:][1][0]+cycles[:][0][0])/2 + (cycles[:][1][1]+cycles[:][0][1])/2 )
-            bar_moment_y_ampl = (self.EI1-self.EI2)*( (cycles[:][1][2]-cycles[:][0][2])/2 + (cycles[:][1][3]-cycles[:][0][3])/2 )
-            bar_moment_y_mean = (self.EI1-self.EI2)*( (cycles[:][1][2]+cycles[:][0][2])/2 + (cycles[:][1][3]+cycles[:][0][3])/2 )
+            #beam_moment_x_ampl = [self.EI2*( (cycles[i][1][0]-cycles[i][0][0])/2 + (cycles[i][1][1]-cycles[i][0][1])/2 ) for i in range(0,len(cycles))]
+            #beam_moment_x_mean = [self.EI2*( (cycles[i][1][0]+cycles[i][0][0])/2 + (cycles[i][1][1]+cycles[i][0][1])/2 ) for i in range(0,len(cycles))]
+            #beam_moment_y_ampl = [self.EI2*( (cycles[i][1][2]-cycles[i][0][2])/2 + (cycles[i][1][3]-cycles[i][0][3])/2 ) for i in range(0,len(cycles))]
+            #beam_moment_y_mean = [self.EI2*( (cycles[i][1][2]+cycles[i][0][2])/2 + (cycles[i][1][3]+cycles[i][0][3])/2 ) for i in range(0,len(cycles))]
+            #bar_moment_x_ampl = [(self.EI1-self.EI2)*( (cycles[i][1][0]-cycles[i][0][0])/2 + (cycles[i][1][1]-cycles[i][0][1])/2 ) for i in range(0,len(cycles))]
+            #bar_moment_x_mean = [(self.EI1-self.EI2)*( (cycles[i][1][0]+cycles[i][0][0])/2 + (cycles[i][1][1]+cycles[i][0][1])/2 ) for i in range(0,len(cycles))]
+            #bar_moment_y_ampl = [(self.EI1-self.EI2)*( (cycles[i][1][2]-cycles[i][0][2])/2 + (cycles[i][1][3]-cycles[i][0][3])/2 ) for i in range(0,len(cycles))]
+            #bar_moment_y_mean = [(self.EI1-self.EI2)*( (cycles[i][1][2]+cycles[i][0][2])/2 + (cycles[i][1][3]+cycles[i][0][3])/2 ) for i in range(0,len(cycles))]
 
             #start = time.time()
             #root_moment_x = self.differentiate(solution.t,solution.y[8,:])
@@ -361,14 +391,14 @@ class Simulation:
             #Current One
             #root_max_bending_stress_x = self.b/2/self.I*root_moment_x
             #root_max_bending_stress_y = self.b/2/self.I*root_moment_y
-            beam_stress_x_ampl = beam_moment_x_ampl*self.strip.width/(self.EI2/self.beam.E)
-            beam_stress_x_mean = beam_moment_x_mean*self.strip.width/(self.EI2/self.beam.E)
-            beam_stress_y_ampl = beam_moment_y_ampl*self.strip.width/(self.EI2/self.beam.E)
-            beam_stress_y_mean = beam_moment_y_mean*self.strip.width/(self.EI2/self.beam.E)
-            bar_stress_x_ampl = bar_moment_x_ampl*(self.strip.width+self.strip.t_inner+2*self.strip.t_outer)/self.strip.dEI
-            bar_stress_x_mean = bar_moment_x_mean*(self.strip.width+self.strip.t_inner+2*self.strip.t_outer)/self.strip.dEI
-            bar_stress_y_ampl = bar_moment_y_ampl*(self.strip.width+self.strip.t_inner+2*self.strip.t_outer)/self.strip.dEI
-            bar_stress_y_mean = bar_moment_y_mean*(self.strip.width+self.strip.t_inner+2*self.strip.t_outer)/self.strip.dEI
+            #beam_stress_x_ampl = beam_moment_x_ampl*self.strip.width/(self.EI2/self.beam.E)
+            #beam_stress_x_mean = beam_moment_x_mean*self.strip.width/(self.EI2/self.beam.E)
+            #beam_stress_y_ampl = beam_moment_y_ampl*self.strip.width/(self.EI2/self.beam.E)
+            #beam_stress_y_mean = beam_moment_y_mean*self.strip.width/(self.EI2/self.beam.E)
+            #bar_stress_x_ampl = bar_moment_x_ampl*(self.strip.width+self.strip.t_inner+2*self.strip.t_outer)/self.strip.dEI
+            #bar_stress_x_mean = bar_moment_x_mean*(self.strip.width+self.strip.t_inner+2*self.strip.t_outer)/self.strip.dEI
+            #bar_stress_y_ampl = bar_moment_y_ampl*(self.strip.width+self.strip.t_inner+2*self.strip.t_outer)/self.strip.dEI
+            #bar_stress_y_mean = bar_moment_y_mean*(self.strip.width+self.strip.t_inner+2*self.strip.t_outer)/self.strip.dEI
 
             #root_max_bending_stress_x = self.E*self.b/2*(y[0, :]+y[1,:])
             #root_max_bending_stress_y = self.E * self.b / 2 * (y[2, :] + y[3, :])
@@ -419,19 +449,20 @@ class Simulation:
             #cycle_list1 = range(0, len(rainflow_1))
             #cycle_list2 = range(0, len(rainflow_2))
             #cycle_list3 = range(0, len(rainflow_3))
-            a0 = 1e-6 #Initial Flaw: 1 Micron
-            crack_x_beam_solution = self.euler_method(a0, beam_stress_x_mean, beam_stress_x_ampl)
-            crack_x_bar_solution = self.euler_method(a0, bar_stress_x_mean, bar_stress_x_ampl)
-            crack_y_beam_solution = self.euler_method(a0, beam_stress_y_mean, beam_stress_y_ampl)
-            crack_y_bar_solution = self.euler_method(a0, bar_stress_y_mean, beam_stress_y_ampl)
-            end = time.time()
-            print("Fatigue Test (SIF) Completed. Time Elapsed:",math.floor(end-start),"seconds")
-            print("Beam (x): "+crack_x_beam_solution[end]+" m")
-            print("Bar (x): " + crack_x_bar_solution[end]+" m")
-            print("Beam (y): " + crack_y_beam_solution[end] + " m")
-            print("Bar (y): " + crack_y_bar_solution[end] + " m")
-            if max(crack_x_beam_solution[end],crack_x_bar_solution[end],crack_y_beam_solution[end],crack_y_bar_solution[end])>=self.strip.width:
-                self.miners_criteria[0] = 1
+            #a0 = 1e-6 #Initial Flaw: 1 Micron
+            #half_cycles = [cycles[i][2] for i in range(0,len(cycles))]
+            #crack_x_beam_solution = self.euler_method(a0, beam_stress_x_mean, beam_stress_x_ampl, half_cycles)
+            #crack_x_bar_solution = self.euler_method(a0, bar_stress_x_mean, bar_stress_x_ampl, half_cycles)
+            #crack_y_beam_solution = self.euler_method(a0, beam_stress_y_mean, beam_stress_y_ampl, half_cycles)
+            #crack_y_bar_solution = self.euler_method(a0, bar_stress_y_mean, beam_stress_y_ampl, half_cycles)
+            #end = time.time()
+            #print("Fatigue Test (SIF) Completed. Time Elapsed:",math.floor(end-start),"seconds")
+            #print("Beam (x): "+crack_x_beam_solution[end]+" m")
+            #print("Bar (x): " + crack_x_bar_solution[end]+" m")
+            #print("Beam (y): " + crack_y_beam_solution[end] + " m")
+            #print("Bar (y): " + crack_y_bar_solution[end] + " m")
+            #if max(crack_x_beam_solution[end],crack_x_bar_solution[end],crack_y_beam_solution[end],crack_y_bar_solution[end])>=self.strip.width:
+                #self.miners_criteria[0] = 1
 
             #print(rainflow_x_mean)
             #print(rainflow_x_count)
@@ -500,23 +531,23 @@ class Simulation:
             #plt.ylabel("Displacement [m]")
             #plt.legend()
 
-            plt.figure()
-            plt.hist(w_x_ampl, label="w_x_ampl")
-            plt.xlabel("Displacement [m]")
+            #plt.figure()
+            #plt.hist(w_x_ampl, label="w_x_ampl")
+            #plt.xlabel("Displacement [m]")
 
-            plt.figure()
-            plt.hist(w_y_ampl, label="w_y_ampl")
-            plt.xlabel("Displacement [m]")
+            #plt.figure()
+            #plt.hist(w_y_ampl, label="w_y_ampl")
+            #plt.xlabel("Displacement [m]")
 
-            plt.figure()
-            plt.hist(bar_stress_x_ampl, label="bar_stress_x_ampl")
-            plt.xlabel("Stress [Pa]")
+            #plt.figure()
+            #plt.hist(bar_stress_x_ampl, label="bar_stress_x_ampl")
+            #plt.xlabel("Stress [Pa]")
 
-            plt.figure()
-            plt.hist(bar_stress_y_ampl, label="bar_stress_x_ampl")
-            plt.xlabel("Stress [Pa]")
+            #plt.figure()
+            #plt.hist(bar_stress_y_ampl, label="bar_stress_x_ampl")
+            #plt.xlabel("Stress [Pa]")
 
-            plt.show()
+            #plt.show()
 
             if show:
                 plt.figure()
@@ -560,8 +591,8 @@ class Simulation:
 
                 plt.show()
 
-                if quit:
-                    break
+            if quit:
+                break
 
         #plt.figure()
         #plt.plot(time_series, y[2, :], 'r', label="gamma1_y")
@@ -748,7 +779,7 @@ class Simulation:
         time = time[0:len(time)-1]
         return [time,u,u_dot]
 
-    def newmark2(self, u_0, u_dot_0, t0, tf, dt_init, rel_error, threshold_error, shrink_factor, alpha, beta):
+    def newmark2(self, u_0, u_dot_0, t0, dt_init, rel_error, threshold_error, shrink_factor, alpha, beta):
 
         #Initialize System Parameters
         M_top = np.concatenate((self.M_matrix, np.zeros(shape=(2,2))), axis=1)
@@ -777,19 +808,27 @@ class Simulation:
         K_top_right = np.concatenate((K_top_right_top, K_top_right_bottom), axis=0)
         K_top = np.concatenate((K0, K_top_right), axis=1)
         K_bottom = np.concatenate((np.zeros(shape=(2,4)), self.resistance), axis=1)
-        K = np.concatenate((K_top, K_bottom), axis=0)
+        K_init = np.concatenate((K_top, K_bottom), axis=0)
+        K = K_init
         #print("K=",K)
 
         #Initialize State Vectors
-        time = t0*np.ones(shape=(1,1))
+        time = t0
         #u = np.zeros(shape=(4,1))
         #duration = 0
+        minutes_elapsed = 0
         reversals = deque()
         cycles = deque()
+        tip_disps = deque()
+        stresses = deque()
+        voltages = deque()
+        cracks = deque()
+        a0 = 1e-6
+        cracks.append((a0,a0,a0,a0))
         u = deque()
         u.append(u_0)
         u_dot_prev = u_dot_0
-        rhs = self.newmark_aero(time[-1], u_dot_prev)-C.dot(u_dot_prev)-K.dot(u)
+        rhs = self.newmark_aero(time, u_dot_prev)-C.dot(u_dot_prev)-K.dot(u)
         #print("M0 = ")
         #print(M0)
         #print("RHS = ")
@@ -800,11 +839,11 @@ class Simulation:
         #i = 1
         dt = dt_init
         dt_prev = dt
-        time = np.append(time, time[-1] + dt)
+        time += dt
         #print(u[-1])
         #print(u_dot_prev)
         #print(u_ddot_prev)
-        while time[-1] < tf:
+        while max(cracks[-1])<self.strip.width:
             error_criterion = 1e6 #(rel_error+1)*np.ones(shape=(4,1))
             dt = dt/shrink_factor #Increase time step to prevent premature shortening
             #while all(x > abs_error for x in error_criterion[:,0]):
@@ -817,7 +856,7 @@ class Simulation:
 
                 #Update (or try to Update again)
                 #Note: Used to be np.array([u[:,-1]]).T
-                f_i = self.newmark_aero(time[-1],u_dot_prev)
+                f_i = self.newmark_aero(time,u_dot_prev)
                 A = M/beta/dt/dt + alpha/beta/dt*C + K
                 B = f_i + M.dot( u[-1]/beta/dt/dt + u_dot_prev/beta/dt + (1/2/beta-1)*u_ddot_prev ) + C.dot(alpha/beta/dt*u[-1] - (1-alpha/beta)*u_dot_prev - dt*(1-alpha/2/beta)*u_ddot_prev)
                 #print("f_i")
@@ -855,27 +894,93 @@ class Simulation:
                             break
                         elif len(reversals)==3:
                             #Half Cycle Detected
-                            cycles.append((0,reversals[-3],reversals[-2]))
+                            cycles.append((reversals[-3],reversals[-2],True))
                             reversals.popleft()
                             #print("Half-Cycle Detected")
                         else:
                             #Full Cycle Detected
-                            cycles.append((0, reversals[-3], reversals[-2]))
+                            cycles.append((reversals[-3], reversals[-2],False))
                             reversals.popleft()
                             reversals.popleft()
                             #print("Cycle Detected")
+
+                        # Calc Tip Displacements
+                        tip_disp_x_1 = math.pow(self.L, 2) * (cycles[-1][0][0] / 3 + cycles[-1][0][1] / 4)
+                        tip_disp_x_2 = math.pow(self.L, 2) * (cycles[-1][1][0] / 3 + cycles[-1][1][1] / 4)
+                        tip_disp_y_1 = math.pow(self.L, 2) * (cycles[-1][0][2] / 3 + cycles[-1][0][3] / 4)
+                        tip_disp_y_2 = math.pow(self.L, 2) * (cycles[-1][1][2] / 3 + cycles[-1][1][3] / 4)
+                        mean_tip_disp_x = (tip_disp_x_1 + tip_disp_x_2) / 2
+                        ampl_tip_disp_x = abs(tip_disp_x_1 - tip_disp_x_2) / 2
+                        mean_tip_disp_y = (tip_disp_y_1 + tip_disp_y_2) / 2
+                        ampl_tip_disp_y = abs(tip_disp_y_1 - tip_disp_y_2) / 2
+                        tip_disps.append((mean_tip_disp_x, ampl_tip_disp_x, mean_tip_disp_y, ampl_tip_disp_y))
+                        # Calc Base Stresses
+                        stress_x_beam_1 = self.beam.E * self.strip.width * (cycles[-1][0][0] + cycles[-1][0][1])
+                        stress_x_beam_2 = self.beam.E * self.strip.width * (cycles[-1][1][0] + cycles[-1][1][1])
+                        stress_y_beam_1 = self.beam.E * self.strip.width * (cycles[-1][0][2] + cycles[-1][0][3])
+                        stress_y_beam_2 = self.beam.E * self.strip.width * (cycles[-1][1][2] + cycles[-1][1][3])
+                        stress_x_strip_1 = stress_x_beam_1 / self.beam.E * self.strip.piezo_material.E * (
+                                    1 + self.strip.t_piezo / self.strip.width)
+                        stress_x_strip_2 = stress_x_beam_2 / self.beam.E * self.strip.piezo_material.E * (
+                                    1 + self.strip.t_piezo / self.strip.width)
+                        stress_y_strip_1 = stress_y_beam_1 / self.beam.E * self.strip.piezo_material.E * (
+                                    1 + self.strip.t_piezo / self.strip.width)
+                        stress_y_strip_2 = stress_y_beam_2 / self.beam.E * self.strip.piezo_material.E * (
+                                    1 + self.strip.t_piezo / self.strip.width)
+                        mean_beam_stress_x = (stress_x_beam_1 + stress_x_beam_2) / 2
+                        ampl_beam_stress_x = abs(stress_x_beam_1 - stress_x_beam_2) / 2
+                        mean_beam_stress_y = (stress_y_beam_1 + stress_y_beam_2) / 2
+                        ampl_beam_stress_y = abs(stress_y_beam_1 - stress_y_beam_2) / 2
+                        mean_strip_stress_x = (stress_x_strip_1 + stress_x_strip_2) / 2
+                        ampl_strip_stress_x = abs(stress_x_strip_1 - stress_x_strip_2) / 2
+                        mean_strip_stress_y = (stress_y_strip_1 + stress_y_strip_2) / 2
+                        ampl_strip_stress_y = abs(stress_y_strip_1 - stress_y_strip_2) / 2
+                        stresses.append((mean_beam_stress_x, ampl_beam_stress_x, mean_beam_stress_y,
+                                         ampl_beam_stress_y, mean_strip_stress_x, ampl_strip_stress_x,
+                                         mean_strip_stress_y, ampl_strip_stress_y))
+                        #print(str(ampl_beam_stress_y)+" "+str(ampl_strip_stress_y))
+
+                        #Calc Voltage
+                        mean_voltage_x = (cycles[-1][0][4] + cycles[-1][1][4])/2
+                        ampl_voltage_x = (cycles[-1][0][4] - cycles[-1][1][4])/2
+                        mean_voltage_y = (cycles[-1][0][4] + cycles[-1][1][4]) / 2
+                        ampl_voltage_y = (cycles[-1][0][4] - cycles[-1][1][4]) / 2
+                        voltages.append((mean_voltage_x,ampl_voltage_x,mean_voltage_y,ampl_voltage_y))
+
+                        # Update Crack Growth
+                        beam_x_crack = self.crack_growth(cracks[-1][0],2*stresses[-1][1],self.beam_crack_consts,cycles[-1][2])
+                        beam_y_crack = self.crack_growth(cracks[-1][1],2*stresses[-1][3],self.beam_crack_consts,cycles[-1][2])
+                        strip_x_crack = self.crack_growth(cracks[-1][2],2*stresses[-1][5],self.strip_crack_consts,cycles[-1][2])
+                        strip_y_crack = self.crack_growth(cracks[-1][3],2*stresses[-1][7],self.strip_crack_consts,cycles[-1][2])
+                        cracks.append((beam_x_crack,beam_y_crack,strip_x_crack,strip_y_crack))
+
+                        #Update K-Matrix
+                        Ea2_x = self.beam.E*math.pow(beam_x_crack,2) + self.strip.piezo_material.E*math.pow(strip_x_crack,2)
+                        Ea2_y = self.beam.E*math.pow(beam_y_crack,2) + self.strip.piezo_material.E*math.pow(strip_y_crack,2)
+                        dK_x = math.pi/4*math.pow(self.strip.width,2)*self.strip.t_piezo*Ea2_x*np.ones(shape=(2,2))
+                        dK_y = math.pi/4*math.pow(self.strip.width,2)*self.strip.t_piezo*Ea2_y*np.ones(shape=(2,2))
+                        dK_top = np.concatenate((dK_x,np.zeros(shape=(2,2))),axis=1)
+                        dK_bot = np.concatenate((np.zeros(shape=(2, 2)),dK_y),axis=1)
+                        dK = np.concatenate((dK_top, dK_bot), axis=0)
+                        dK = np.concatenate((dK,np.zeros(shape=(4,2))),axis=1)
+                        dK = np.concatenate((dK,np.zeros(shape=(2,6))),axis=0)
+                        K = K_init - dK
+
             #Reset Names
             u_dot_prev = u_dot
             u_ddot_prev = u_ddot
             #i += 1
-            time = np.append(time, time[-1] + dt)
+            time += dt
+            if math.floor(time/60)>minutes_elapsed:
+                minutes_elapsed += 1
+                print(str(minutes_elapsed)+" minutes elapsed. a_max = "+str(max(cracks[-1])))
             #duration += dt
 
             if (dt != dt_prev):
                 1#print(dt)
             dt_prev = dt
         #time = time[0:len(time)-1]
-        return [time[-1],cycles] #[time,u,u_dot]
+        return [time,cycles,tip_disps,stresses,voltages,cracks] #[time,u,u_dot]
 
     def old_newmark(self, u_0, u_dot_0, time, dt, alpha, beta):
         #full_omega_matrix_top = np.concatenate((self.omega_matrix, np.zeros(shape=(2, 2))), axis=1)
@@ -974,11 +1079,19 @@ class Simulation:
         return ans
 
     def aerodynamics(self, t, gamma):
-        #U = self.speed_series(t)/10
-        #delta = self.direction_series(t)/180*math.pi
+        if t>self.last_second:
+            self.time_series.append(self.time_series[-1]+1)
+            self.discrete_wind_series.append(self.wind.update())
+            self.last_second += 1
+            self.speed_series = sp.interpolate.interp1d(self.time_series, self.discrete_wind_series[:, 0],
+                                                        fill_value="extrapolate")
+            self.direction_series = sp.interpolate.interp1d(self.time_series, self.discrete_wind_series[:, 1],
+                                                            fill_value="extrapolate")
+        U = self.speed_series(t)
+        delta = self.direction_series(t)/180*math.pi
         #Static Wind Test Case
-        U = 5
-        delta = 0/180*math.pi
+        #U = 5
+        #delta = 0/180*math.pi
         #Sweeping Wind Test Case
         #U = self.test_speed_series(t)
         #delta = self.test_direction_series(t)
@@ -1046,18 +1159,20 @@ class Simulation:
         print(num, "cycles")
         return miners_total
 
-    def euler_method(self,a0,stress_mean,stress_ampl):
+    def euler_method(self,a0,stress_mean,stress_ampl,half_cycle):
         crack = np.zeros(shape=(1,len(stress_mean)))
         crack[0] = a0
         for i in range(1,len(stress_mean)):
-            crack[i] = crack[i-1] + self.crack_growth(crack[i-1],stress_mean[i],stress_ampl[i])
+            crack[i] = crack[i-1] + self.crack_growth(crack[i-1],stress_mean[i],stress_ampl[i],half_cycle[i])
         return crack
 
-    def crack_growth(self,a,stress_mean,stress_ampl): #Returns da/dN (Paris-Erdogan)
-        K_max = self.stress_intensity_factor(a, stress_mean + stress_ampl)
-        K_min = self.stress_intensity_factor(a, stress_mean - stress_ampl) #mean stress minus stress amplitude
-        dadN = self.C*math.pow(K_max-K_min, self.m)
-        return dadN
+    def crack_growth(self,a,delta_stress,crack_growth_constants,is_half_cycle): #Returns da/dN (Paris-Erdogan)
+        C = crack_growth_constants[0]
+        m = crack_growth_constants[1]
+        delta_K = delta_stress*math.sqrt(math.pi*a) #self.stress_intensity_factor(a, delta_stress)
+        cycle_mult = 0.5 if is_half_cycle else 1 #Halves crack-growth if a half-cycle
+        dadN = C*math.pow(delta_K/1e6, m)*cycle_mult #Note conversion to MPa*sqrt(m)
+        return a+dadN
 
     def stress_intensity_factor(self,a,sigma): #SIF for a beam undergoing bending
         f_a_w = self.f_factor(a)[0]
